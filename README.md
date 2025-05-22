@@ -1,5 +1,5 @@
-# {PROJECT NAME}
-## NHS England Digitial Analytics and Research Team - PhD Internship Project
+# Impact of midwife continuity of care on stillbirth rate and first feed in England 
+## NHS England Data & Analytics - Analysis part of an MRES at the University of Leeds
 
 ### About the Project
 
@@ -8,7 +8,7 @@ This repository holds code for the {PROJECT NAME} {SHORT DESCRIPTION}
 
 [Link to original project propsoal](https://nhsx.github.io/nhsx-internship-projects/)
 
-_**Note:** Only public or fake data are shared in this repository._
+_**Note:** No data is shared in this repository 
 
 ### Project Stucture
 
