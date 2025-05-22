@@ -3,8 +3,7 @@
 
 ### About the Project
 
-[![status: experimental](https://github.com/GIScience/badges/raw/master/status/experimental.svg)](https://github.com/GIScience/badges#experimental)
-
+[![status: archive](https://github.com/GIScience/badges/raw/master/status/archive.svg)](https://github.com/GIScience/badges#archive)
 This repository holds code for the {PROJECT NAME} {SHORT DESCRIPTION}
 
 [Link to original project propsoal](https://nhsx.github.io/nhsx-internship-projects/)
