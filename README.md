@@ -20,24 +20,24 @@ _**Note:** No data is shared in this repository
 ### Built With
 
 [![R version 4.2.1 ](https://img.shields.io/badge/R-v4.2.1-blue.svg)]([https://www.r-project.org/])
-- {LIST OF MAIN PACKAGE VERSIONS}
+[![pandas version 1.2.1.2 ](https://img.shields.io/badge/pandas-v1.21.2-blue.svg)]([https://pandas.pydata.org/pandas-docs/stable/whatsnew/v1.2.1.html#])
 
 ### Getting Started
 
 #### Installation
 
-To get a local copy up and running follow these simple steps.
-
 To clone the repo:
 
 `git clone https://github.com/nhsx/{REPO NAME}`
 
-To create a suitable environment:
-- ```python -m venv _env```
-- `source _env/bin/activate`
-- `pip install -r requirements.txt`
+To use the code 'as-is' you will need:
+ `Access to NHS England's internal secure data environment`
+ `Access to the Maternity Services Dataset`
 
-{ADDITIONAL TECHNICAL SUPPORT AND NEEDS} 
+Alternatively, to replicate thie piece of work outside of NHS England, you will need to apply for access to Maternity Services Dataset through the [Dataset Access Request Service (DARS)](https://digital.nhs.uk/services/data-access-request-service-dars#apply-through-dars-online). Then edit the queries to use the Maternity Services Dataset DARS data structure.
+
+
+Please contact chris.roebuck@nhs.net
 
 ### Usage
 {DESCRIPTION OF CODE}
