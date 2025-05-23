@@ -19,7 +19,7 @@ _**Note:** No data is shared in this repository
 
 ### Built With
 
-[![Python v3.8](https://img.shields.io/badge/python-v3.8-blue.svg)](https://www.python.org/downloads/release/python-380/)
+[![R version 4.2.1 ](https://img.shields.io/badge/R-v4.2.1-blue.svg)]([https://www.r-project.org/])
 - {LIST OF MAIN PACKAGE VERSIONS}
 
 ### Getting Started
