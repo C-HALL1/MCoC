@@ -4,13 +4,13 @@
 ### About the Project
 
 [![status: archive](https://github.com/GIScience/badges/raw/master/status/archive.svg)](https://github.com/GIScience/badges#archive)
-This repository holds code for the {PROJECT NAME} {SHORT DESCRIPTION}
+This repository holds code for the {Impact of midwife continuity of care on stillbirth rate and first feed in England} {NHS England Data & Analytics - Analysis part of an MRES at the University of Leeds}
 
-[Link to original project propsoal](https://nhsx.github.io/nhsx-internship-projects/)
+[Link to original project propsoal TBD](https://nhsx.github.io/nhsx-internship-projects/)
 
 _**Note:** No data is shared in this repository 
 
-### Project Stucture
+### Project Stucture TBD
 
 - The main code is found in the root of the repository (see Usage below for more information)
 - The accompanying [report](./reports/report.pdf) is also available in the `reports` folder
@@ -19,56 +19,44 @@ _**Note:** No data is shared in this repository
 
 ### Built With
 
-[![Python v3.8](https://img.shields.io/badge/python-v3.8-blue.svg)](https://www.python.org/downloads/release/python-380/)
-- {LIST OF MAIN PACKAGE VERSIONS}
+[![R version 4.2.1 ](https://img.shields.io/badge/R-v4.2.1-blue.svg)]([https://www.r-project.org/])
+[![pandas version 1.2.1.2 ](https://img.shields.io/badge/pandas-v1.21.2-blue.svg)]([https://pandas.pydata.org/pandas-docs/stable/whatsnew/v1.2.1.html#])
 
 ### Getting Started
 
 #### Installation
 
-To get a local copy up and running follow these simple steps.
-
 To clone the repo:
 
-`git clone https://github.com/nhsx/{REPO NAME}`
+`git clone https://github.com/C-HALL/MCoC`
 
-To create a suitable environment:
-- ```python -m venv _env```
-- `source _env/bin/activate`
-- `pip install -r requirements.txt`
+To use the code 'as-is' you will need:
+ `Access to NHS England's internal secure data environment`
+ `Access to the Maternity Services Dataset`
 
-{ADDITIONAL TECHNICAL SUPPORT AND NEEDS} 
+Alternatively, to replicate thie piece of work outside of NHS England, you will need to apply for access to Maternity Services Dataset through the [Dataset Access Request Service (DARS)](https://digital.nhs.uk/services/data-access-request-service-dars#apply-through-dars-online). Then edit the queries to use the Maternity Services Dataset DARS data structure.
+
+
+Please contact [chris.roebuck@nhs.net](mailto:chris.roebuck@nhs.net) or [charlotte.atherden@nhs.net](mailto:charlotte.atherden@nhs.net) with any questions about using or adapting the code. 
 
 ### Usage
-{DESCRIPTION OF CODE}
+{DESCRIPTION OF CODE TBD}
 
 #### Outputs
-{LIST AND DESCRIPTION OF OUTPUTS}
+{LIST AND DESCRIPTION OF OUTPUTS TBD}
 
-{NOTES ON REPRODUCIBILITY OF RESULTS}
+{NOTES ON REPRODUCIBILITY OF RESULTS TBD}
 
 #### Datasets
-{DESCRIPTION AND LINKS TO DATASETS}
-
-{LINK TO FAKE DATA TO SUPPORT INITAIL CODE RUNS}
-
-### Roadmap
-
-See the {LINK TO REPO ISSUES} for a list of proposed features (and known issues).
+This data uses the Maternity Services Dataset (MSDS).
+[Metadata.](https://digital.nhs.uk/data-and-information/data-collections-and-data-sets/data-sets/maternity-services-data-set/guidance?area=metadata)
+[Information on the dataset. ]()
 
 ### Contributing
 
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**.
+This project is in archive and is not currently being worked on, therefore we are not requesting any contributions to this project.  
 
-1. Fork the Project
-2. Create your Feature Branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your Changes (`git commit -m 'Add some AmazingFeature'`)
-4. Push to the Branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-_See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidance._
-
-### License
+### License TBD
 
 Unless stated otherwise, the codebase is released under [the MIT Licence][mit].
 This covers both the codebase and any sample code in the documentation.
@@ -84,7 +72,7 @@ of the [Open Government 3.0][ogl] licence.
 
 ### Contact
 
-To find out more about the [Digitial Analytics and Research Team](https://www.nhsx.nhs.uk/key-tools-and-info/nhsx-analytics-unit/) visit our [project website](https://nhsx.github.io/AnalyticsUnit/projects.html) or get in touch at [analytics-unit@nhsx.nhs.uk](mailto:analytics-unit@nhsx.nhs.uk).
+Please feel free to contact the authors of the paper at [chris.roebuck@nhs.net](mailto:chris.roebuck@nhs.net), [jane.sandall@kcl.ac.uk](mailto:jane.sandall@kcl.ac.uk), [R.M.West@leeds.ac.uk](mailto:R.M.West@leeds.ac.uk), [k.parkyn@nhs.net](mailto:k.parkyn@nhs.net), [charlotte.atherden@nhs.net](mailto:charlotte.atherden@nhs.net) and [O.A.Johnson@leeds.ac.uk](mailto:O.A.Johnson@leeds.ac.uk). 
 
 <!-- ### Acknowledgements -->
 
