@@ -397,3 +397,5 @@ LEFT JOIN ContCare24WeeksB b1 ON a.a101=b1.UniqPregID
 LEFT JOIN FirstAntenatalAppt f ON a.a101 = f.UniqPregID 
 LEFT JOIN PrevStillBirthTable ON a.a101=PrevStillBirthTable.UniqPregID 
 ;
+
+--SQL output now gets converted to pandas for the next stage of the pipeline
