@@ -4,7 +4,6 @@
 ### About the Project
 
 [![status: archive](https://github.com/GIScience/badges/raw/master/status/archive.svg)](https://github.com/GIScience/badges#archive)
-This repository holds code for the {Impact of midwife continuity of care on stillbirth rate and first feed in England} {NHS England Data & Analytics - Analysis part of an MRES at the University of Leeds}
 
 [Link to original project propsoal TBD](https://nhsx.github.io/nhsx-internship-projects/)
 
