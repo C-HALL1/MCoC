@@ -51,8 +51,9 @@ The main pipeline is run first. The main pipline is split into two. Part 1 conta
 
 #### Datasets
 This data uses the Maternity Services Dataset (MSDS).
+[Information on the dataset.](https://digital.nhs.uk/data-and-information/data-collections-and-data-sets/data-sets/maternity-services-data-set/)
 [Metadata.](https://digital.nhs.uk/data-and-information/data-collections-and-data-sets/data-sets/maternity-services-data-set/guidance?area=metadata)
-[Information on the dataset. ]()
+[Technical Output Specification (TOS) and Data Model.](https://digital.nhs.uk/data-and-information/data-collections-and-data-sets/data-sets/maternity-services-data-set/tools-and-guidance)
 
 ### Contributing
 
