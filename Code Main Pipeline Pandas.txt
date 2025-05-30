@@ -1,0 +1,102 @@
+#start work in Python/Pandas
+ 
+import numpy as np
+import pandas as pd
+import re
+import datetime
+from sklearn import metrics
+from sklearn import svm
+from sklearn.model_selection import cross_val_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.feature_selection import SelectKBest, chi2
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from scipy.stats import chi2_contingency
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import cross_val_predict
+from sklearn.model_selection import cross_validate
+from sklearn.metrics import average_precision_score
+from sklearn.metrics import make_scorer
+from sklearn.metrics import precision_score
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+ 
+ 
+print (pd.__version__)
+print (np.__version__)
+
+spark_allvars = spark.table("mat_pseudo_d1_collab.Chris_Roebuck_300424_Consolidated_VariablesStreamlinedPregOrderv1") 
+AllVarsDF = spark_allvars.toPandas()
+
+#filters to be implemented to data in Python. The pipeline has evolved so most of these filters have already been applied in SQL upstream but there are a few edge cases that these act to remove so they have been preserved as a double check.
+ 
+#Ensures estimated conception date is within study range.
+def datefilter(df, filter_type="none"):
+  if filter_type == "DoC":
+    a = df[(df["EstConceptionDateCombined"]>"2020-09-30")] 
+    b = a[(a["EstConceptionDateCombined"]<"2023-01-01")]
+  else:
+    b = df
+  return b
+ 
+#Removes women not eligible for analysis because they are flagged as having been discharged from maternity services by 24 weeks - these are already excluded for all women except those in the "very late" first appointment cohort but for those women in the "very late" cohort, this is a data quality problem so these records are being removed.
+ 
+def remove_pre24week(df,apply="yes"):
+  if apply == "yes":
+    return df[(df["CareCont24NamedvsNoContCarer"]>-2)]
+  else:
+    return df
+ 
+#Removes women who do not have a known MCoC placement status  
+  
+def remove_not_fully_known(df,apply="no"):
+  if apply == "yes":
+    return df[(df["CombinedContCare"]>-1)]    
+  else:
+    return df
+ 
+ 
+# include first pregnancy only where childbrearing woman has multiple sequential pregnancies in period
+ 
+def first_pregancy_only (df,apply="no"):
+  if apply == "yes":
+    return df[(df["PregOrder"]==1)]    
+  else:
+    return df
+
+#Derivations for R
+#Combine main estimated conception date field with backup one for any cases where missing data and get into correct format
+AllVarsDF["EstConceptionDateDate"] = pd.to_datetime(AllVarsDF["EstConceptionDate"])
+AllVarsDF["EstConcAlt"] =pd.to_datetime(dict(year=AllVarsDF.YearConc,month=AllVarsDF.MonthConc,day=1))
+AllVarsDF["EstConceptionDateCombined"] = np.where(pd.isna(AllVarsDF["EstConceptionDateDate"]),AllVarsDF["EstConcAlt"],AllVarsDF["EstConceptionDateDate"])
+AllVarsDF["conc_MY"] = AllVarsDF["EstConceptionDateCombined"].dt.to_period("M")
+#replace NAs in data with defined values for ease of onward processing
+values = {"FinalEthnicity":"U","DECI_IMD":-1,"QUINT_IMD":-1,"SummaryEthnicity":"Other","CareCont24NamedvsNoContCarer":-2}
+AllVarsDF = AllVarsDF.fillna(values) 
+ 
+#this combines identification of three cohorts i) women placed on MCoC by 24 weeks, women not placed on MCoC by 24 weeks, and women not seen at all by 24 weeks into a single field - for historic reasons these are given the values of 3, 0 and 4 resoectively.
+AllVarsDF["CombinedContCare"]=np.where(AllVarsDF['Vlate']==0,(AllVarsDF["CareCont24NamedvsNoContCarer"]*3),4)
+ 
+ 
+#create single variables from multiple dummy variables for regression models in R
+AllVarsDF["BandedAge"]=(AllVarsDF["U20"]*20)+(AllVarsDF["Range20to24"]*24)+(AllVarsDF["Range25to29"]*29)+(AllVarsDF["Range30to34"]*34)+(AllVarsDF["Range35to39"]*39)+(AllVarsDF["Range40to44"]*44)+(AllVarsDF["plus45"]*45)
+AllVarsDF["BroadBandedAge"]=(AllVarsDF["U20"]*20)+(AllVarsDF["Range20to24"]*34)+(AllVarsDF["Range25to29"]*34)+(AllVarsDF["Range30to34"]*34)+(AllVarsDF["Range35to39"]*34)+(AllVarsDF["Range40to44"]*44)+(AllVarsDF["plus45"]*44)
+AllVarsDF["Parity"]=(AllVarsDF["Parity3plus"]*3)+(AllVarsDF["Parity2"]*2)+(AllVarsDF["Parity1"]*1)+(AllVarsDF["Parity0"]*0)+(AllVarsDF["ParityUnknown"]*-1)
+AllVarsDF["PrevCaes"]=(AllVarsDF["PrevCaes"]*1)+(AllVarsDF["PrevCaesUnknown"]*-1)
+AllVarsDF["PrevStill"]=(AllVarsDF["PrevStill"]*1)+(AllVarsDF["PrevStillUnknown"]*-1)
+ 
+#apply filters to get to population for study
+a=datefilter(AllVarsDF, "DoC")
+b=remove_pre24week(a,"yes")
+c=remove_not_fully_known(b,"yes")
+#c=remove_not_fully_known(a,"yes")
+d=first_pregancy_only(c,"yes")
+
+#generate a single base file for all regression models in R. This is exported to a new environment where R modelling takes place. NAs that haven't purposefully been converted to other values dropped from all fields except first feed of breast milk for single export file. For first feed of breast milk the NAs will be filtered out in the model itself. a101 is the unique pregancy identifier.
+single_export_step1 = d[["a101","StillBirthFlag","CombinedOrgCodeProvider","BandedAge","FinalEthnicity","DECI_IMD","CombinedContCare","Parity","PrevCaes","PrevStill","Late","SummaryEthnicity"]].dropna()
+single_export_step2 = d[["a101","BreastMilkFirstFeed"]]
+single_export_step3 = single_export_step1.merge(single_export_step2,on="a101",how="left")
+single_export_step4 = single_export_step3[["BreastMilkFirstFeed","StillBirthFlag","CombinedOrgCodeProvider","BandedAge","FinalEthnicity","SummaryEthnicity","DECI_IMD","CombinedContCare","Parity","PrevCaes","PrevStill","Late"]]
+display(single_export_step4)
+
+#End of main pipeline in Python. Pipeline continues in R into which table generated by above code is imported.
