@@ -11,7 +11,7 @@ _**Note:** No data is shared in this repository
 
 ### Project Stucture TBD
 
-- The main code is found in the root of the repository (see Usage below for more information)
+- The main pipeline code is split into 2 (SQL and Pandas) and is found in the root of the repository. `Please see Usage below for more information`
 - The accompanying [report](./reports/report.pdf) is also available in the `reports` folder
 - More information about the code usage can be found in the [model card](./model_card.md)
 - {OTHER REPO STRUCTURE}
@@ -22,6 +22,9 @@ _**Note:** No data is shared in this repository
 [![pandas version 1.2.1.2 ](https://img.shields.io/badge/pandas-v1.21.2-blue.svg)]([https://pandas.pydata.org/pandas-docs/stable/whatsnew/v1.2.1.html#])
 
 ### Getting Started
+This code uses standard data processing techniques and statistical tests applied to a specific dataset. 
+As such, it is not viewed as "a custom algorithm or software central to the paper and has not been reported previously in a published research paper", so is not at production standard for those without access to NHS England's secure Data Access Environment, 
+which is strictly controlled given the need to ensure patient confidentiality, but is being made available to maximise transparency.
 
 #### Installation
 
@@ -39,7 +42,7 @@ Alternatively, to replicate thie piece of work outside of NHS England, you will 
 Please contact [chris.roebuck@nhs.net](mailto:chris.roebuck@nhs.net) or [charlotte.atherden@nhs.net](mailto:charlotte.atherden@nhs.net) with any questions about using or adapting the code. 
 
 ### Usage
-{DESCRIPTION OF CODE TBD}
+The main pipeline is run first. The main pipline is split into two. Part 1 contains SQL code. The output of the SQL code feeds directly into part 2 which is written in Pandas. 
 
 #### Outputs
 {LIST AND DESCRIPTION OF OUTPUTS TBD}

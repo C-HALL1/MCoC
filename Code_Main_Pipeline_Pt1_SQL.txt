@@ -1,0 +1,401 @@
+This code uses standard data processing techniques and statistical tests applied to a specific dataset. 
+As such, it is not viewed as "a custom algorithm or software central to the paper and has not been reported previously in a published research paper", so is not at production standard for those without access to NHS England's secure Data Access Environment, 
+which is strictly controlled given the need to ensure patient confidentiality, but is being made available to maximise transparency.
+
+This shows the data preparation stage of the pipeline. There are two broad components to this: the first stage that is done in SQL and a second stage that is done in Pandas having converted the SQL table via Spark. 
+This file contains the code for the firt part of the pipeline. 
+
+The input to this is the Maternity Services Dataset (MSDS) cental respository stored securely by NHS England on its Data Access Environment. The fields within the MSDS are highlighted within the published MSDS Technical Output Specification (searchable online). 
+The output is an exported CSV file of curated output to feed the multilevel logistic regression models which are performed in a separate NHS England secure environment in R.
+
+%sql
+--FILTER - SINGLETONS ONLY VIA TWO MECHANISMS AND GESTATION LENGTH WITHIN VALID RANGE AND BIRTH OUTCOME KNOWN
+--multiple births looked at web statistic that said 1 in 65 pregnancies multiple birth and got similar answer from this
+--PART1 - get list of records with mulitple births
+ 
+CREATE OR REPLACE TEMPORARY VIEW Excl AS
+SELECT UniqPregID ExclList, MAX(BirthOrderMaternitySUS) MaxBirthOrder FROM
+(
+  SELECT UniqPregID, BirthOrderMaternitySUS
+  FROM mat_pre_pseudo_d1.msd401babydemographics 
+  WHERE (NOT (BirthOrderMaternitySUS IN (1,"01","UU") OR BirthOrderMaternitySUS is NULL)) 
+)
+GROUP BY UniqPregID
+;
+ 
+CREATE OR REPLACE TEMPORARY VIEW ExclAlt AS
+SELECT * 
+FROM
+(
+  SELECT BirthsPerLabandDel, UniqPregID, ROW_NUMBER() OVER (PARTITION BY UniqPregID ORDER BY RPStartDate DESC, RecordNumber DESC) AS row1 
+  FROM mat_pre_pseudo_d1.msd301labourdelivery
+  --WHERE RPStartDate < "2023-05-30"
+)
+WHERE row1 = 1 AND BirthsPerLabandDel > 1
+;
+ 
+--PART2 - join records with mulitiple births to exclusion list and remove
+ 
+CREATE OR REPLACE TEMPORARY VIEW Included AS
+ 
+SELECT m.UniqPregID Incl, MAX(GestationLengthBirth) GestLenBir
+FROM mat_pre_pseudo_d1.msd401babydemographics m
+LEFT JOIN Excl ON (m.UniqPregID = ExclList)
+LEFT JOIN ExclAlt a ON (m.UniqPregID = a.UniqPregID)
+WHERE ExclList is NULL AND a.UniqPregID is NULL
+AND (NOT (GestationLengthBirth>315 OR GestationLengthBirth IS NULL OR GestationLengthBirth<168 OR (PregOutcome NOT in ('01','02','03','04'))))
+--AND RPStartDate < "2023-05-30"
+GROUP BY m.UniqPregID
+;
+
+--derive month and year of birth and estimate month and year of conception by two possible mechanisms
+CREATE OR REPLACE TEMPORARY VIEW MYBirth AS
+SELECT MAX(YearOfBirthBaby) YearBirth, MAX(MonthOfBirthBaby) MonthBirth, UniqPregID
+FROM mat_pre_pseudo_d1.msd401babydemographics 
+GROUP BY UniqPregID
+;
+--estimating conception date by gestational age at antenatal appointment date
+CREATE OR REPLACE TEMPORARY VIEW EstConceptionTbl AS
+SELECT EstConceptionDate,UniqPregID
+FROM
+(
+  SELECT AntenatalAppDate - int(GestAgeBooking) AS EstConceptionDate,UniqPregID, AntenatalAppDate, ROW_NUMBER() OVER (PARTITION BY UniqPregID ORDER BY AntenatalAppDate DESC, RPStartDate DESC, RecordNumber DESC) AS row1 
+  FROM mat_pre_pseudo_d1.msd101pregnancybooking
+  WHERE GestAgeBooking>0
+)
+WHERE row1 = 1 
+ 
+;
+ 
+--include second mechanism for estimating month and year of conception for filling any gaps
+ 
+CREATE OR REPLACE TEMPORARY VIEW EstConceptionTbl2 AS
+SELECT EstConceptionDate,es.UniqPregID, YearBirth, MonthBirth, GestLenBir, ROUND(GestLenBir/30.5,0), int(MonthBirth)-ROUND(GestLenBir/30.5,0), CASE WHEN (int(MonthBirth)-ROUND(GestLenBir/30.5,0))<1 THEN 12 + (int(MonthBirth)-ROUND(GestLenBir/30.5,0)) ELSE (int(MonthBirth)-ROUND(GestLenBir/30.5,0)) END MonthConc, CASE WHEN (int(MonthBirth)-ROUND(GestLenBir/30.5,0))<1 THEN int(YearBirth)-1 ELSE int(YearBirth) END YearConc ---
+FROM EstConceptionTbl es
+FULL JOIN MYBirth m ON es.UniqPregID = m.UniqPregID
+FULL JOIN Included i ON es.UniqPregID = i.Incl
+;
+
+--generate variable to determine by pregancy whether outcomes was stillbirth
+ 
+CREATE OR REPLACE TEMPORARY VIEW StillBirthTable AS
+SELECT UniqPregID,  MAX(PregOutcome) PregOutcomeFlag, MAX(StillBirth) StillBirthFlag, MAX(OrgCodeProvider) Prov
+FROM
+(
+  SELECT UniqPregID, PregOutcome, OrgCodeProvider,
+  CASE WHEN PregOutcome in ('02','03','04') THEN 1 
+    ELSE CASE WHEN PregOutcome in ('01') THEN 0
+    END END StillBirth
+  FROM mat_pre_pseudo_d1.msd401babydemographics
+)
+GROUP BY UniqPregID
+;
+
+--generate variable to determine by pregnacy whether the first feed was breastmilk
+ 
+CREATE OR REPLACE TEMPORARY VIEW FirstFeedTable AS
+SELECT UniqPregID,  MAX(BreastMilkFirstFeedRecord) BreastMilkFirstFeed, MAX(BabyFirstFeedIndCode) MaxBabyFirstFeedIndCode
+FROM
+(
+  SELECT UniqPregID, BabyFirstFeedIndCode ,
+  CASE WHEN BabyFirstFeedIndCode in ('01','02') THEN 1 
+    ELSE CASE WHEN BabyFirstFeedIndCode in ('03') THEN 0
+    END END BreastMilkFirstFeedRecord
+  FROM mat_pre_pseudo_d1.msd401babydemographics
+)
+ 
+GROUP BY UniqPregID
+;
+
+--generate variable to determine by pregancy the NHS Trust at which the birth occurred using two methods to try to catch this
+CREATE OR REPLACE TEMPORARY VIEW Provider301 AS
+SELECT *
+FROM
+(
+  SELECT UniqPregID, OrgCodeProvider, ROW_NUMBER() OVER (PARTITION BY UniqPregID ORDER BY RecordNumber DESC) rowno
+  FROM mat_pre_pseudo_d1.msd301labourdelivery
+)
+WHERE rowno = 1
+;
+CREATE OR REPLACE TEMPORARY VIEW Provider401 AS
+SELECT *
+FROM
+(
+  SELECT UniqPregID, OrgCodeProvider, ROW_NUMBER() OVER (PARTITION BY UniqPregID ORDER BY RecordNumber DESC) rowno
+  FROM mat_pre_pseudo_d1.msd401babydemographics
+)
+WHERE rowno = 1
+;
+CREATE OR REPLACE TEMPORARY VIEW ProviderCombined AS
+SELECT --A.UniqPregID, B.UniqPregID, A.OrgCodeProvider, B.OrgCodeProvider, 
+  CASE WHEN B.UniqPregID IS NULL THEN A.UniqPregID 
+  ELSE B.UniqPregID END CombinedUniqPregID,
+  CASE WHEN B.OrgCodeProvider IS NULL THEN A.OrgCodeProvider 
+  ELSE B.OrgCodeProvider END CombinedOrgCodeProvider
+FROM Provider301 A
+FULL JOIN Provider401 B ON A.UniqPregID = B.UniqPregID 
+;
+
+--create single ethnic category for each mother ID prioritising the most specific categories and then the most common categories
+ 
+CREATE OR REPLACE TEMPORARY VIEW Single_Ethnicity_Mother1 AS
+SELECT Person_ID_Mother, NewEthnicity,
+COUNT(Person_ID_Mother) AS EthnicCount
+FROM
+(
+ SELECT m.EthnicCategoryMother AS NewEthnicity, m.Person_ID_Mother
+ FROM mat_pre_pseudo_d1.msd001motherdemog m
+ WHERE m.EthnicCategoryMother REGEXP '^[A-Y]'
+)
+GROUP BY Person_ID_Mother, NewEthnicity
+ 
+;
+ 
+CREATE OR REPLACE TEMPORARY VIEW Single_Ethnicity_Mother2 AS
+ 
+SELECT Single_Ethnicity_Mother1.Person_ID_Mother, Single_Ethnicity_Mother1.EthnicCount, Single_Ethnicity_Mother1.NewEthnicity,
+CASE WHEN Single_Ethnicity_Mother1.NewEthnicity IN ('A','J','H','N','K','M','D','R','B','F','E') THEN Single_Ethnicity_Mother1.EthnicCount + 300000
+  ELSE CASE WHEN Single_Ethnicity_Mother1.NewEthnicity IN ('C','L','G','P') THEN Single_Ethnicity_Mother1.EthnicCount + 200000
+  ELSE Single_Ethnicity_Mother1.EthnicCount + 100000 END END EthnicCount2
+  FROM Single_Ethnicity_Mother1
+;
+ 
+CREATE OR REPLACE TEMPORARY VIEW Final_Ethnicity_Mother AS
+SELECT J.Person_ID_Mother,Max(NewEthnicity) AS FinalEthnicity,
+  CASE
+    WHEN Max(NewEthnicity) IN ("A","B","C") THEN "White"
+    WHEN Max(NewEthnicity) IN ("D","E","F","G") THEN "Mixed"
+    WHEN Max(NewEthnicity) IN ("H","J","K","L") THEN "SouthAsian"
+    WHEN Max(NewEthnicity) IN ("M","N","P") THEN "Black"
+    ELSE "Other" 
+  END SummaryEthnicity 
+FROM
+(
+  SELECT MAXEthnic,K.Person_ID_Mother,Single_Ethnicity_Mother2.NewEthnicity
+  FROM
+  (
+    SELECT MAX(EthnicCount2) AS MAXEthnic,Person_ID_Mother
+    FROM Single_Ethnicity_Mother2
+ 
+    GROUP BY Person_ID_Mother
+  )K
+ 
+  INNER JOIN Single_Ethnicity_Mother2 ON MAXEthnic=Single_Ethnicity_Mother2.EthnicCount2 AND K.Person_ID_Mother=Single_Ethnicity_Mother2.Person_ID_Mother
+)J
+ 
+WHERE NewEthnicity IN ('A','J','H','N','K','M','D','R','B','F','E','C','L','G','P','S')
+GROUP BY J.Person_ID_Mother
+;
+
+--create single index of multiple deprivation (IMD) value for each mother ID
+ 
+CREATE OR REPLACE TEMPORARY VIEW IMD_Mother AS
+SELECT       A.Person_ID_Mother,ROW_NUMBER() OVER (PARTITION BY A.Person_ID_Mother ORDER BY A.RPStartDate DESC, A.RecordNumber DESC) row_no, B.DECI_IMD, ROUND(B.DECI_IMD/2) QUINT_IMD
+FROM        mat_pre_pseudo_d1.msd001motherdemog as A 
+LEFT JOIN  dss_corporate.english_indices_of_dep_v02 as B
+ON A.LSOAMother2011 = B.LSOA_CODE_2011 AND B.IMD_YEAR = 2019
+--WHERE row_no = 1
+;
+CREATE OR REPLACE TEMPORARY VIEW IMD_Mother_Latest AS
+SELECT      *
+FROM        IMD_Mother
+WHERE row_no = 1
+;
+
+--Calculate age of mother at birth for each pregnancy
+CREATE OR REPLACE TEMPORARY VIEW Age_Mother AS
+SELECT       A.Person_ID_Mother,A.UniqPregID, ROW_NUMBER() OVER (PARTITION BY A.UniqPregID  ORDER BY A.RecordNumber DESC) row_no, A.AgeAtBirthMother,
+CASE WHEN A.AgeAtBirthMother < 20 THEN 1 
+  ELSE CASE WHEN A.AgeAtBirthMother < 100 THEN 0 END END U20,
+CASE WHEN A.AgeAtBirthMother BETWEEN 20 AND 24 THEN 1 
+  ELSE CASE WHEN A.AgeAtBirthMother < 100 THEN 0 END END Range20to24,
+CASE WHEN A.AgeAtBirthMother BETWEEN 25 AND 29 THEN 1 
+  ELSE CASE WHEN A.AgeAtBirthMother < 100 THEN 0 END END Range25to29,
+CASE WHEN A.AgeAtBirthMother BETWEEN 30 AND 34 THEN 1 
+  ELSE CASE WHEN A.AgeAtBirthMother < 100 THEN 0 END END Range30to34,
+CASE WHEN A.AgeAtBirthMother BETWEEN 35 AND 39 THEN 1 
+  ELSE CASE WHEN A.AgeAtBirthMother < 100 THEN 0 END END Range35to39,
+CASE WHEN A.AgeAtBirthMother BETWEEN 40 AND 44 THEN 1 
+  ELSE CASE WHEN A.AgeAtBirthMother < 100 THEN 0 END END Range40to44,
+CASE WHEN A.AgeAtBirthMother BETWEEN 45 AND 100 THEN 1 
+  ELSE CASE WHEN A.AgeAtBirthMother < 100 THEN 0 END END plus45
+FROM        mat_pre_pseudo_d1.msd401babydemographics as A
+ 
+ 
+;
+CREATE OR REPLACE TEMPORARY VIEW Age_Mother_Latest AS
+SELECT      *
+FROM        Age_Mother
+WHERE row_no = 1
+;
+
+--derive parity for each pregnacy ID
+CREATE OR REPLACE TEMPORARY VIEW ParityTable AS
+SELECT * 
+FROM
+(
+  SELECT UniqPregID, ROW_NUMBER() OVER (PARTITION BY UniqPregID  ORDER BY RPStartDate DESC,RecordNumber DESC) row_no, 
+   PreviousLiveBirths,
+   CASE WHEN PreviousLiveBirths BETWEEN 3 AND 30 THEN 1
+   ELSE  0 END  Parity3plus,
+   CASE WHEN PreviousLiveBirths = 2 THEN 1
+   ELSE  0 END Parity2, 
+   CASE WHEN PreviousLiveBirths = 1 THEN 1
+   ELSE  0 END Parity1,
+   CASE WHEN PreviousLiveBirths = 0 THEN 1
+   ELSE  0 END Parity0,
+   CASE WHEN PreviousLiveBirths BETWEEN 0 AND 30 THEN 0
+   ELSE 1 END ParityUnknown
+  FROM mat_pre_pseudo_d1.msd101pregnancybooking m
+)
+WHERE row_no=1
+;
+
+----derive each pregnacy whether the mother had a previous Caeasarean
+CREATE OR REPLACE TEMPORARY VIEW PrevCaesTable AS
+SELECT MAX(PrePrevCaes) PrevCaes,MIN(PrePrevCaesUnknown) PrevCaesUnknown,UniqPregID
+FROM
+(
+  SELECT UniqPregID, PreviousLiveBirths, 
+   CASE WHEN PreviousCaesareanSections > 0 THEN 1
+   ELSE 0 END PrePrevCaes,
+   CASE WHEN PreviousCaesareanSections > -1 THEN 0
+   ELSE 1 END PrePrevCaesUnknown
+  FROM mat_pre_pseudo_d1.msd101pregnancybooking m
+)
+GROUP BY UniqPregID
+;
+ 
+----derive for each pregnancy whether the mother had a previous stillbirth
+CREATE OR REPLACE TEMPORARY VIEW PrevStillBirthTable AS
+SELECT MAX(PrePrevStill) PrevStill,MIN(PrePrevStillUnknown) PrevStillUnknown,UniqPregID
+FROM
+(
+  SELECT UniqPregID, PreviousLiveBirths, 
+   CASE WHEN PreviousStillBirths > 0 THEN 1
+   ELSE 0 END PrePrevStill,
+   CASE WHEN PreviousStillBirths > -1 THEN 0
+   ELSE 1 END PrePrevStillUnknown
+  FROM mat_pre_pseudo_d1.msd101pregnancybooking m
+)
+GROUP BY UniqPregID
+;
+
+--this overall section progresses through four temporary tables to create a single view of whether a woman with valid data's latest status by 24 weeks is i) having been placed on an MCoC pathway with named midwife and care team (flagged as 1), ii) known to have not been placed on an an MCoC pathway (regardless of whether midwife and care team named) (flagged as 0), iii) under care services at 24 weeks but with no records with positive identification of whether they were in group i) or ii) by 24 weeks so their status was unknown (flagged as -1), iv) invaid data recorded as being discharged by 24 weeks - not included in this table, null upon joining to subsequent master table and then filtered out.
+ 
+--this table narrows cohort for continuity of carer status to those women with valid data who weren't discharged from maternity services before 24 weeks
+CREATE OR REPLACE TEMPORARY VIEW IncludedInMeasure24 AS
+ 
+SELECT UniqPregID,GestAgeBooking,AntenatalAppDate,DischargeDateMatService
+FROM
+(
+  SELECT UniqPregID,GestAgeBooking,AntenatalAppDate,DischargeDateMatService, ROW_NUMBER() OVER (PARTITION BY UniqPregID  ORDER BY AntenatalAppDate DESC, RecordNumber DESC) AS row1 
+  FROM mat_pre_pseudo_d1.msd101pregnancybooking as MSD101
+  WHERE GestAgeBooking>0
+ 
+)
+WHERE row1 = 1
+AND (DischargeDateMatService is null or (GestAgeBooking + DATEDIFF(DischargeDateMatService,AntenatalAppDate))>167)
+;
+ 
+--this table looks at whether the latest care plan with a known MCoC status is an MCoC plan or not. It does not add the additional stipulation of a named midwife/care team. This is used to confirm those women definitely not placed on MCoC pathway denoted by a zero in "ContCareBin"
+ 
+CREATE OR REPLACE TEMPORARY VIEW ContCareLatestValid24 AS
+SELECT ContCareBin, UniqPregID, row1
+FROM 
+(
+  SELECT ROW_NUMBER() OVER (PARTITION BY UniqPregID  ORDER BY CarePlanDate DESC, RecordNumber DESC) AS row1,RecordNumber,UniqPregID, ContCarePathInd,ContCareBin  
+  FROM
+  (
+    SELECT c.RecordNumber,c.UniqPregID, c.ContCarePathInd, c.RPStartDate,c.CarePlanDate, c.CarePlanType,
+      CASE WHEN c.ContCarePathInd = "Y" THEN 1
+      ELSE CASE WHEN c.ContCarePathInd = "N" THEN 0 
+      ELSE -1 END END ContCareBin   
+    FROM mat_pre_pseudo_d1.msd102matcareplan c
+    LEFT JOIN IncludedInMeasure24 i ON c.UniqPregID=i.UniqPregID
+    WHERE (i.GestAgeBooking + DATEDIFF (c.CarePlanDate,i.AntenatalAppDate))<=167
+ 
+  )  
+  WHERE ContCareBin > -1
+  AND CarePlanType="05"
+)
+WHERE row1=1
+ 
+;
+ 
+--this table looks at whether the latest care plan with a known MCoC status is an MCoC plan or not, including the additional stipulation of a named midwife/care team. This is used to confirm those women definitely placed on MCoC pathway denoted by a 1 in CareCont24NamedvsNoContCarerp
+ 
+CREATE OR REPLACE TEMPORARY VIEW ContCare24WeeksPrep AS
+ 
+SELECT UniqPregID, CASE WHEN ContCarePathInd ="Y" AND CareProfLID is not null AND TeamLocalID is not null THEN 1 ELSE CASE WHEN ContCarePathInd ="N" THEN 0 END END CareCont24NamedvsNoContCarerp
+FROM 
+(
+  SELECT m.UniqPregID, ContCarePathInd, CareProfLID, TeamLocalID, ROW_NUMBER() OVER (PARTITION BY m.UniqPregID  ORDER BY  CarePlanDate DESC, RecordNumber DESC) AS row1  
+  FROM IncludedInMeasure24 i
+  INNER JOIN mat_pre_pseudo_d1.msd102matcareplan as m on i.UniqPregID = m.UniqPregID
+  WHERE (i.GestAgeBooking + DATEDIFF (m.CarePlanDate,i.AntenatalAppDate))<=167
+  AND m.CarePlanType="05"
+  AND m.ContCarePathInd is not null
+ 
+)
+WHERE row1=1
+;
+ 
+--this table combines the previous two tables by taking the cases when the woman's latest known status by 24 weeks is having an MCoC plan including named midwife/care team from ContCare24WeeksPrep and combining this with the cases when the woman's latest known status by 24 weeks is definitely having an MCoC plan (regardles of named midwife/care team) from ContCareLatestValid24
+ 
+CREATE OR REPLACE TEMPORARY VIEW ContCare24WeeksB AS
+ 
+SELECT i.UniqPregID, CASE WHEN CareCont24NamedvsNoContCarerp = 1 THEN 1 ELSE CASE WHEN ContCareBin = 0 THEN 0 ELSE -1 END END CareCont24NamedvsNoContCarer
+FROM IncludedInMeasure24 i
+LEFT JOIN ContCare24WeeksPrep c ON i.UniqPregID=c.UniqPregID
+LEFT JOIN ContCareLatestValid24 v ON i.UniqPregID=v.UniqPregID
+;
+
+--Ascertains if woman's first antenatal appointment is classed as late (between 13 and 24 weeks) or very late (24 weeks or over)
+CREATE OR REPLACE TEMPORARY VIEW FirstAntenatalAppt AS
+ 
+SELECT UniqPregID,GestAgeBookingFirst,AntenatalAppDate FirstAntenatalAppDate ,DischargeDateMatService, GestAgeBookingFirstWk, ReasonLateBooking, Late, Vlate
+FROM
+(
+  SELECT UniqPregID,GestAgeBooking GestAgeBookingFirst,FLOOR (GestAgeBooking/7) GestAgeBookingFirstWk , CASE WHEN GestAgeBooking > 90 AND GestAgeBooking < 168 THEN 1 ELSE 0 END Late,CASE WHEN GestAgeBooking > 167 THEN 1 ELSE 0 END VLate, AntenatalAppDate,DischargeDateMatService, ReasonLateBooking, ROW_NUMBER() OVER (PARTITION BY UniqPregID  ORDER BY AntenatalAppDate ASC, RecordNumber DESC) AS row1 
+  FROM mat_pre_pseudo_d1.msd101pregnancybooking as MSD101
+  WHERE GestAgeBooking>0
+ 
+)
+WHERE row1 = 1
+;
+
+--create a single index from table 101 that has a unique mother ID for each pregnancy ID
+CREATE OR REPLACE TEMPORARY VIEW UniqPreg101 AS
+SELECT A.UniqPregID, MAX(A.Person_ID_Mother) MaxMum
+FROM mat_pre_pseudo_d1.msd101pregnancybooking as A 
+GROUP BY A.UniqPregID
+;
+ 
+CREATE OR REPLACE TEMPORARY VIEW UniqPregMotherJoined AS
+SELECT UniqPreg101.UniqPregID a101,UniqPreg101.MaxMum a101Mum
+FROM UniqPreg101
+;
+
+--brings all measures together into a single table centred around unique pregancy identify or mother identifier for some demographics * rename table ahead of exporting
+CREATE TABLE mat_pseudo_d1_collab.Chris_Roebuck_300424_Consolidated_VariablesStreamlinedv1 AS
+SELECT a.a101, EstConceptionTbl2.EstConceptionDate, MYBirth.MonthBirth,MYBirth.YearBirth, Included.Incl, StillBirthTable.StillBirthFlag, FirstFeedTable.BreastMilkFirstFeed,ProviderCombined.CombinedOrgCodeProvider,                      Final_Ethnicity_Mother.SummaryEthnicity, Final_Ethnicity_Mother.FinalEthnicity,IMD_Mother_Latest.QUINT_IMD,IMD_Mother_Latest.DECI_IMD, Age_Mother_Latest.AgeAtBirthMother,Age_Mother_Latest.U20,Age_Mother_Latest.Range20to24, Age_Mother_Latest.Range25to29,Age_Mother_Latest.Range30to34, Age_Mother_Latest.Range35to39, Age_Mother_Latest.Range40to44, Age_Mother_Latest.plus45,ParityTable.Parity3plus, ParityTable.Parity2, ParityTable.Parity1, ParityTable.Parity0, ParityTable.ParityUnknown, PrevCaesTable.PrevCaes, PrevCaesTable.PrevCaesUnknown ,b1.CareCont24NamedvsNoContCarer,EstConceptionTbl2.MonthConc,EstConceptionTbl2.YearConc, PrevStillBirthTable.PrevStill, PrevStillBirthTable.PrevStillUnknown, f.GestAgeBookingFirstWk, f.Late, f.Vlate
+ 
+FROM UniqPregMotherJoined as a
+LEFT JOIN EstConceptionTbl2 ON a.a101=EstConceptionTbl2.UniqPregID
+LEFT JOIN MYBirth ON a.a101=MYBirth.UniqPregID
+INNER JOIN Included ON a.a101=Incl
+LEFT JOIN StillBirthTable ON a.a101=StillBirthTable.UniqPregID
+LEFT JOIN FirstFeedTable ON a.a101=FirstFeedTable.UniqPregID
+LEFT JOIN ProviderCombined ON a.a101=ProviderCombined.CombinedUniqPregID
+LEFT JOIN Final_Ethnicity_Mother ON a.a101Mum=Final_Ethnicity_Mother.Person_ID_Mother
+LEFT JOIN IMD_Mother_Latest ON a.a101Mum=IMD_Mother_Latest.Person_ID_Mother
+LEFT JOIN Age_Mother_Latest ON a.a101=Age_Mother_Latest.UniqPregID
+LEFT JOIN ParityTable ON a.a101=ParityTable.UniqPregID
+LEFT JOIN PrevCaesTable ON a.a101=PrevCaesTable.UniqPregID
+LEFT JOIN ContCare24WeeksB b1 ON a.a101=b1.UniqPregID
+LEFT JOIN FirstAntenatalAppt f ON a.a101 = f.UniqPregID 
+LEFT JOIN PrevStillBirthTable ON a.a101=PrevStillBirthTable.UniqPregID 
+;
+
+--SQL output now gets converted to pandas for the next stage of the pipeline
