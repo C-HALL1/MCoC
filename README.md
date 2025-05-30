@@ -11,7 +11,7 @@ _**Note:** No data is shared in this repository
 
 ### Project Stucture TBD
 
-- The main code is found in the root of the repository (see Usage below for more information)
+- The main pipeline code is split into 2 (SQL and Pandas) and is found in the root of the repository. `Please see Usage below for more information`
 - The accompanying [report](./reports/report.pdf) is also available in the `reports` folder
 - More information about the code usage can be found in the [model card](./model_card.md)
 - {OTHER REPO STRUCTURE}
