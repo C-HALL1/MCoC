@@ -1,3 +1,13 @@
+This code uses standard data processing techniques and statistical tests applied to a specific dataset. 
+As such, it is not viewed as "a custom algorithm or software central to the paper and has not been reported previously in a published research paper", so is not at production standard for those without access to NHS England's secure Data Access Environment, 
+which is strictly controlled given the need to ensure patient confidentiality, but is being made available to maximise transparency.
+
+This shows the data preparation stage of the pipeline. There are two broad components to this: the first stage that is done in SQL and a second stage that is done in Pandas having converted the SQL table via Spark. 
+This file contains the code for the second part of the pipeline. 
+
+The input to this is the Maternity Services Dataset (MSDS) cental respository stored securely by NHS England on its Data Access Environment. The fields within the MSDS are highlighted within the published MSDS Technical Output Specification (searchable online). 
+The output is an exported CSV file of curated output to feed the multilevel logistic regression models which are performed in a separate NHS England secure environment in R.
+
 #start work in Python/Pandas
  
 import numpy as np
