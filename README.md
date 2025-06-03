@@ -1,5 +1,5 @@
 # Impact of midwife continuity of carer on stillbirth rate and first feed in England 
-## NHS England Data & Analytics - Analysis part of an MRES at the University of Leeds
+## Analysis produced as part of an MRES at the University of Leeds in affiliation with NHS England Data & Analytics
 
 ### About the Project
 
