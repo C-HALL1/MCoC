@@ -5,9 +5,7 @@
 
 [![status: archive](https://github.com/GIScience/badges/raw/master/status/archive.svg)](https://github.com/GIScience/badges#archive)
 
-[Link to original project propsoal TBD](https://nhsx.github.io/nhsx-internship-projects/)
-
-_**Note:** No data is shared in this repository 
+**Note:** No data is shared in this repository 
 
 ### Project Stucture TBD
 
@@ -39,7 +37,7 @@ To use the code 'as-is' you will need:
 Alternatively, to replicate thie piece of work outside of NHS England, you will need to apply for access to Maternity Services Dataset through the [Dataset Access Request Service (DARS)](https://digital.nhs.uk/services/data-access-request-service-dars#apply-through-dars-online). Then edit the queries to use the Maternity Services Dataset DARS data structure.
 
 
-Please contact [chris.roebuck@nhs.net](mailto:chris.roebuck@nhs.net) or [charlotte.atherden@nhs.net](mailto:charlotte.atherden@nhs.net) with any questions about using or adapting the code. 
+Please contact [chris.roebuck@nhs.net](mailto:chris.roebuck@nhs.net), [charlotte.atherden@nhs.net](mailto:charlotte.atherden@nhs.net) or [k.parkyn@nhs.net](mailto:k.parkyn@nhs.net) with any questions about using or adapting the code. 
 
 ### Usage
 The main pipeline is run first. The main pipline is split into two. Part 1 contains SQL code. The output of the SQL code feeds directly into part 2 which is written in Pandas. 
@@ -59,17 +57,11 @@ This data uses the Maternity Services Dataset (MSDS).
 
 This project is in archive and is not currently being worked on, therefore we are not requesting any contributions to this project.  
 
-### License TBD
-
-Unless stated otherwise, the codebase is released under [the MIT Licence][mit].
-This covers both the codebase and any sample code in the documentation.
-
-_See [LICENSE](./LICENSE) for more information._
+### License
 
 The documentation is [© Crown copyright][copyright] and available under the terms
 of the [Open Government 3.0][ogl] licence.
 
-[mit]: LICENCE
 [copyright]: http://www.nationalarchives.gov.uk/information-management/re-using-public-sector-information/uk-government-licensing-framework/crown-copyright/
 [ogl]: http://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/
 
