@@ -1,0 +1,914 @@
+#This document provides the code for the final stage of the pipeline that is run in R Studio and involves some reformatting and additional derivations to underpin the statistical analysis, followed by running the statistical analysis. A minimum set of core fields were exported from the Python/Pandas section of the pipeline in Databricks, so some derivations from these are performed in R.
+
+#add the following libraries:
+
+library(Matrix)
+library(lme4)
+library(dplyr)
+library(finalfit)
+library(openxlsx)
+library(DescTools)
+library(mlmhelpr)
+library(caret)
+library(pROC)
+
+#read in CSV export that is the output from the Python/Pandas section of the pipeline
+#table abbreviated to COM to signify it is a combined source table that is imported as previous iterations had multiple source tables for each output
+
+COM<-read.csv("R://SourceTables180324/Combined.csv")
+
+#Stage 1 - data preparation and specification
+
+#convert the discrete independent variables to factors
+COM$CombinedOrgCodeProvider<-as.factor(COM$CombinedOrgCodeProvider)
+COM$BandedAge<-as.factor(COM$BandedAge)
+COM$FinalEthnicity<-as.factor(COM$FinalEthnicity)
+COM$DECI_IMD<-as.factor(COM$DECI_IMD)
+COM$CombinedContCare<-as.factor(COM$CombinedContCare)
+COM$Parity<-as.factor(COM$Parity)
+COM$PrevCaes<-as.factor(COM$PrevCaes)
+COM$PrevStill<-as.factor(COM$PrevStill)
+COM$Late<-as.factor(COM$Late)
+
+#create some less granular derived fields that are used in the logistic regression models for demographic subsets for stillbirths, given the relatively small numbers
+
+#create two broad categories of age
+COM2<-COM%>%
+mutate(BroadAge =case_when(BandedAge %in% c("20","24","29","34") ~ "u34",
+TRUE ~ "o35"))
+#create two broad categories of deprivation
+COM2<-COM2%>%
+mutate(BroadDeprivation =case_when(DECI_IMD %in% c("1","2","3","4","5") ~ "more_deprived",
+DECI_IMD == "-1" ~ "unknown",
+TRUE ~ "less_deprived"))
+#create two broad categories for whether the woman had any previous births
+COM2<-COM2%>%
+mutate(PrevBirth =case_when(Parity  =="0" ~ "n",
+Parity == "-1" ~ "Unknown",
+TRUE ~ "y"))
+#create broad ethnic categories
+COM2<-COM2%>%
+mutate(BroadEthnicity =case_when(FinalEthnicity %in% c("M","N","P") ~ "Black",
+FinalEthnicity %in% c("A","B","C") ~ "White",
+FinalEthnicity %in% c("H","J","K","L") ~ "Asian",
+TRUE ~ "MixedAndOther"))
+
+#convert the newly derived discrete independent variables to factors
+
+COM2$BroadEthnicity <-as.factor(COM2$BroadEthnicity)
+COM2$BroadPrevBirths <-as.factor(COM2$BroadPrevBirths)
+COM2$PrevBirth <-as.factor(COM2$PrevBirth)
+COM2$BroadDeprivation <-as.factor(COM2$BroadDeprivation)
+COM2$BroadAge <-as.factor(COM2$BroadAge)
+
+#set appropriate "base" values for each independent variable used in the logistic regression
+
+COM2 <-within(COM2,BandedAge<-relevel(BandedAge,ref="34"))
+COM2 <-within(COM2,DECI_IMD<-relevel(DECI_IMD,ref="10"))
+COM2 <-within(COM2,Parity<-relevel(Parity,ref="0"))
+COM2 <-within(COM2,PrevCaes<-relevel(PrevCaes,ref="0"))
+COM2 <-within(COM2,PrevStill<-relevel(PrevStill,ref="0"))
+COM2 <-within(COM2,BroadEthnicity<-relevel(BroadEthnicity,ref="White"))
+COM2 <-within(COM2,BroadPrevBirths<-relevel(BroadPrevBirths,ref="u1"))
+COM2 <-within(COM2,PrevBirth<-relevel(PrevBirth,ref="n"))
+COM2 <-within(COM2,BroadPrevDeprivation<-relevel(BroadDeprivation,ref="less_deprived"))
+COM2 <-within(COM2,BroadAge<-relevel(BroadAge,ref="u34"))
+
+#unpack the three cohorts from a single field into two different fields with binary indication of cohort so they can be used as dependent variable in some models  (no appointment by 24 weeks [Vlate], appointment by 24 weeks and placed on MCoC, and appointment by 24 weeks and not placed on MCoC)
+
+COM2<-COM2%>%
+mutate(Vlate=case_when(CombinedContCare == "4" ~ 1,
+CombinedContCare == "3" ~ NA,
+TRUE~0))
+COM2<-COM2%>%
+mutate(CCBinary=case_when(CombinedContCare == "3" ~ 1,
+CombinedContCare == "4" ~ NA,
+TRUE~0))
+
+#create additional tables from different demographic subsets of records from the main table to underpin logistic regression models for different demographic groups
+
+#create ethnicity subset tables
+#Black women
+TableB <-COM2[COM2$FinalEthnicity %in% c("M","N","P"),]
+#White women
+TableW <-COM2[COM2$FinalEthnicity %in% c("A","B","C"),]
+#Women of South Asian ethnicities
+TableA <-COM2[COM2$FinalEthnicity %in% c("H","J","K","L"),]
+#Other ethnic groups
+TableZ <-COM2[COM2$BroadEthnicity =="MixedAndOther",]
+
+#creating deprivation subsets 
+#Most deprived quintile
+TableQ <-COM2[COM2$DECI_IMD %in% c("1","2"),]
+#Women with known geographic deprivation status but not in most deprived quintile
+TableO <-COM2[COM2$DECI_IMD %in% c("3","4","5","6","7","8","9","10"),]
+
+#set appropriate "base" values for the deprivation field in the deprivation subset table
+TableQ$DECI_IMD <-as.factor(TableQ$DECI_IMD)
+TableO$DECI_IMD <-as.factor(TableO$DECI_IMD)
+TableQ <-within(TableQ,DECI_IMD<-relevel(DECI_IMD,ref="2"))
+TableO <-within(TableO,DECI_IMD<-relevel(DECI_IMD,ref="10"))
+
+
+
+#COM [the single combined table] has been superseded by COM2 so remove it to clear memory
+rm(COM)
+
+#introduce consistent nomenclature for dependent variables to assist in model specification
+
+dependentS="StillBirthFlag"
+dependentF="BreastMilkFirstFeed"
+dependentV = "Vlate"
+dependentC = "CCBinary"
+
+#create different subsets of independent (explanatory) variables for deployment in different models
+
+explanatoryG= c("BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late","CombinedContCare")
+explanatoryE= c("BroadAge","FinalEthnicity","BroadDeprivation","PrevBirth","PrevCaes","PrevStill","Late","CombinedContCare")
+explanatoryY= c("BroadAge","BroadEthnicity","DECI_IMD","PrevBirth","PrevCaes","PrevStill","Late","CombinedContCare")
+explanatoryZ= c("BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill")
+explanatoryX= c("BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late")
+
+#specify random effect term
+
+random_effect="CombinedOrgCodeProvider"
+
+#Stage 2 - running statistical models
+#This code is listed out multiple times for each of the combinations of independent variables, outcome variables and demographic subsets for which it is run. Only the first iteration of the code is annotated.
+
+
+#to ensure sufficient memory, gc is deployed multiple times within the code to remove any unnecessary items
+gc()
+# name of table, dependent variable, and explanatory variable list that is deployed:
+# COM2dependentSexplanatoryG
+
+#create some summary metrics for table
+COM2 %>%
+summary_factorlist(dependentS,explanatoryG,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+#run univariate logistic regression for each relevant dependent variable
+COM2%>%
+glmuni(dependentS,explanatoryG)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+
+#run multivariate logistic regression for the set of dependent variables, including generating some model performance metrics
+COM2%>%
+glmmulti(dependentS,explanatoryG)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsCOM2dependentSexplanatoryG<-data.frame(logLik(interim1)[1])
+colnames(metricsCOM2dependentSexplanatoryG)<-'mvlogLik'
+metricsCOM2dependentSexplanatoryG$group<-'COM2dependentSexplanatoryG'
+metricsCOM2dependentSexplanatoryG$mvAIC<- extractAIC(interim1)[2]
+gc()
+
+#run multilevel logistic regression for the set of dependent variables, with NHS Trust as random effect, including generating some model performance metrics
+COM2%>%
+glmmixed(dependentS,explanatoryG, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsCOM2dependentSexplanatoryG$mlLogLik<- logLik(interim2)[1]
+metricsCOM2dependentSexplanatoryG$mlAIC<- extractAIC(interim2)[2]
+metricsCOM2dependentSexplanatoryG$mlicc<- icc(interim2)[,2]
+metricsCOM2dependentSexplanatoryG$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsCOM2dependentSexplanatoryG<-data.frame(ranef(interim2, condVar = TRUE))
+randomsCOM2dependentSexplanatoryG$model<-'COM2dependentSexplanatoryG'
+gc()
+
+#merge outputs from different regression models
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->COM2dependentSexplanatoryG
+
+#create separate columns for some of the information Final Fit has generated in a combined column
+COM2dependentSexplanatoryG$numerator<-as.numeric(do.call(rbind, strsplit(COM2dependentSexplanatoryG$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(COM2dependentSexplanatoryG$Total, " "))[,1])
+COM2dependentSexplanatoryG$denominator<-as.numeric(do.call(rbind, strsplit(COM2dependentSexplanatoryG$Total, " "))[,1])
+
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+COM2dependentSexplanatoryG$rate<-BinomCI(x=COM2dependentSexplanatoryG$numerator,n=COM2dependentSexplanatoryG$denominator,method="wilson")[,1]
+COM2dependentSexplanatoryG$lcl<-BinomCI(x=COM2dependentSexplanatoryG$numerator,n=COM2dependentSexplanatoryG$denominator,method="wilson")[,2]
+COM2dependentSexplanatoryG$ucl<-BinomCI(x=COM2dependentSexplanatoryG$numerator,n=COM2dependentSexplanatoryG$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+COM2dependentSexplanatoryG$group<-'group.COM2dependentSexplanatoryG'
+
+#export outputput to Excel
+write.xlsx(COM2dependentSexplanatoryG,"R://Outputs140524ThreeDp/COM2dependentSexplanatoryG.xlsx")
+write.xlsx(metricsCOM2dependentSexplanatoryG,"R://Outputs140524ThreeDp/metricsCOM2dependentSexplanatoryG.xlsx")
+write.xlsx(randomsCOM2dependentSexplanatoryG,"R://Outputs140524ThreeDp/randomsCOM2dependentSexplanatoryG.xlsx")
+
+#end of fully annotated application of modelling and statistical analysis to one combination of table, dependent variables and independent variables. Remainder of code applies the same modelling and statistical analysis to other combinations and is not fully annotated. Methods section presents all the permutations of tables, dependent variables and independent variables for which models were run.
+
+gc()
+# COM2dependentFexplanatoryG
+COM2 %>%
+summary_factorlist(dependentF,explanatoryG,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+COM2%>%
+glmuni(dependentF,explanatoryG)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+COM2%>%
+glmmulti(dependentF,explanatoryG)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsCOM2dependentFexplanatoryG<-data.frame(logLik(interim1)[1])
+colnames(metricsCOM2dependentFexplanatoryG)<-'mvlogLik'
+metricsCOM2dependentFexplanatoryG$group<-'COM2dependentFexplanatoryG'
+metricsCOM2dependentFexplanatoryG$mvAIC<- extractAIC(interim1)[2]
+gc()
+COM2%>%
+glmmixed(dependentF,explanatoryG, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsCOM2dependentFexplanatoryG$mlLogLik<- logLik(interim2)[1]
+metricsCOM2dependentFexplanatoryG$mlAIC<- extractAIC(interim2)[2]
+metricsCOM2dependentFexplanatoryG$mlicc<- icc(interim2)[,2]
+metricsCOM2dependentFexplanatoryG$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsCOM2dependentFexplanatoryG<-data.frame(ranef(interim2, condVar = TRUE))
+randomsCOM2dependentFexplanatoryG$model<-'COM2dependentFexplanatoryG'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->COM2dependentFexplanatoryG
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+COM2dependentFexplanatoryG$numerator<-as.numeric(do.call(rbind, strsplit(COM2dependentFexplanatoryG$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(COM2dependentFexplanatoryG$Total, " "))[,1])
+COM2dependentFexplanatoryG$denominator<-as.numeric(do.call(rbind, strsplit(COM2dependentFexplanatoryG$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+COM2dependentFexplanatoryG$rate<-BinomCI(x=COM2dependentFexplanatoryG$numerator,n=COM2dependentFexplanatoryG$denominator,method="wilson")[,1]
+COM2dependentFexplanatoryG$lcl<-BinomCI(x=COM2dependentFexplanatoryG$numerator,n=COM2dependentFexplanatoryG$denominator,method="wilson")[,2]
+COM2dependentFexplanatoryG$ucl<-BinomCI(x=COM2dependentFexplanatoryG$numerator,n=COM2dependentFexplanatoryG$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+COM2dependentFexplanatoryG$group<-'group.COM2dependentFexplanatoryG'
+#export to Excel
+write.xlsx(COM2dependentFexplanatoryG,"R://Outputs140524ThreeDp/COM2dependentFexplanatoryG.xlsx")
+write.xlsx(metricsCOM2dependentFexplanatoryG,"R://Outputs140524ThreeDp/metricsCOM2dependentFexplanatoryG.xlsx")
+write.xlsx(randomsCOM2dependentFexplanatoryG,"R://Outputs140524ThreeDp/randomsCOM2dependentFexplanatoryG.xlsx")
+gc()
+# TableAdependentFexplanatoryG
+TableA %>%
+summary_factorlist(dependentF,explanatoryG,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableA%>%
+glmuni(dependentF,explanatoryG)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableA%>%
+glmmulti(dependentF,explanatoryG)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableAdependentFexplanatoryG<-data.frame(logLik(interim1)[1])
+colnames(metricsTableAdependentFexplanatoryG)<-'mvlogLik'
+metricsTableAdependentFexplanatoryG$group<-'TableAdependentFexplanatoryG'
+metricsTableAdependentFexplanatoryG$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableA%>%
+glmmixed(dependentF,explanatoryG, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableAdependentFexplanatoryG$mlLogLik<- logLik(interim2)[1]
+metricsTableAdependentFexplanatoryG$mlAIC<- extractAIC(interim2)[2]
+metricsTableAdependentFexplanatoryG$mlicc<- icc(interim2)[,2]
+metricsTableAdependentFexplanatoryG$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableAdependentFexplanatoryG<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableAdependentFexplanatoryG$model<-'TableAdependentFexplanatoryG'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableAdependentFexplanatoryG
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableAdependentFexplanatoryG$numerator<-as.numeric(do.call(rbind, strsplit(TableAdependentFexplanatoryG$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableAdependentFexplanatoryG$Total, " "))[,1])
+TableAdependentFexplanatoryG$denominator<-as.numeric(do.call(rbind, strsplit(TableAdependentFexplanatoryG$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableAdependentFexplanatoryG$rate<-BinomCI(x=TableAdependentFexplanatoryG$numerator,n=TableAdependentFexplanatoryG$denominator,method="wilson")[,1]
+TableAdependentFexplanatoryG$lcl<-BinomCI(x=TableAdependentFexplanatoryG$numerator,n=TableAdependentFexplanatoryG$denominator,method="wilson")[,2]
+TableAdependentFexplanatoryG$ucl<-BinomCI(x=TableAdependentFexplanatoryG$numerator,n=TableAdependentFexplanatoryG$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableAdependentFexplanatoryG$group<-'group.TableAdependentFexplanatoryG'
+#export to Excel
+write.xlsx(TableAdependentFexplanatoryG,"R://Outputs140524ThreeDp/TableAdependentFexplanatoryG.xlsx")
+write.xlsx(metricsTableAdependentFexplanatoryG,"R://Outputs140524ThreeDp/metricsTableAdependentFexplanatoryG.xlsx")
+write.xlsx(randomsTableAdependentFexplanatoryG,"R://Outputs140524ThreeDp/randomsTableAdependentFexplanatoryG.xlsx")
+gc()
+# TableBdependentFexplanatoryG
+TableB %>%
+summary_factorlist(dependentF,explanatoryG,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableB%>%
+glmuni(dependentF,explanatoryG)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableB%>%
+glmmulti(dependentF,explanatoryG)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableBdependentFexplanatoryG<-data.frame(logLik(interim1)[1])
+colnames(metricsTableBdependentFexplanatoryG)<-'mvlogLik'
+metricsTableBdependentFexplanatoryG$group<-'TableBdependentFexplanatoryG'
+metricsTableBdependentFexplanatoryG$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableB%>%
+glmmixed(dependentF,explanatoryG, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableBdependentFexplanatoryG$mlLogLik<- logLik(interim2)[1]
+metricsTableBdependentFexplanatoryG$mlAIC<- extractAIC(interim2)[2]
+metricsTableBdependentFexplanatoryG$mlicc<- icc(interim2)[,2]
+metricsTableBdependentFexplanatoryG$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableBdependentFexplanatoryG<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableBdependentFexplanatoryG$model<-'TableBdependentFexplanatoryG'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableBdependentFexplanatoryG
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableBdependentFexplanatoryG$numerator<-as.numeric(do.call(rbind, strsplit(TableBdependentFexplanatoryG$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableBdependentFexplanatoryG$Total, " "))[,1])
+TableBdependentFexplanatoryG$denominator<-as.numeric(do.call(rbind, strsplit(TableBdependentFexplanatoryG$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableBdependentFexplanatoryG$rate<-BinomCI(x=TableBdependentFexplanatoryG$numerator,n=TableBdependentFexplanatoryG$denominator,method="wilson")[,1]
+TableBdependentFexplanatoryG$lcl<-BinomCI(x=TableBdependentFexplanatoryG$numerator,n=TableBdependentFexplanatoryG$denominator,method="wilson")[,2]
+TableBdependentFexplanatoryG$ucl<-BinomCI(x=TableBdependentFexplanatoryG$numerator,n=TableBdependentFexplanatoryG$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableBdependentFexplanatoryG$group<-'group.TableBdependentFexplanatoryG'
+#export to Excel
+write.xlsx(TableBdependentFexplanatoryG,"R://Outputs140524ThreeDp/TableBdependentFexplanatoryG.xlsx")
+write.xlsx(metricsTableBdependentFexplanatoryG,"R://Outputs140524ThreeDp/metricsTableBdependentFexplanatoryG.xlsx")
+write.xlsx(randomsTableBdependentFexplanatoryG,"R://Outputs140524ThreeDp/randomsTableBdependentFexplanatoryG.xlsx")
+
+gc()
+# TableWdependentFexplanatoryG
+TableW %>%
+summary_factorlist(dependentF,explanatoryG,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableW%>%
+glmuni(dependentF,explanatoryG)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableW%>%
+glmmulti(dependentF,explanatoryG)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableWdependentFexplanatoryG<-data.frame(logLik(interim1)[1])
+colnames(metricsTableWdependentFexplanatoryG)<-'mvlogLik'
+metricsTableWdependentFexplanatoryG$group<-'TableWdependentFexplanatoryG'
+metricsTableWdependentFexplanatoryG$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableW%>%
+glmmixed(dependentF,explanatoryG, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableWdependentFexplanatoryG$mlLogLik<- logLik(interim2)[1]
+metricsTableWdependentFexplanatoryG$mlAIC<- extractAIC(interim2)[2]
+metricsTableWdependentFexplanatoryG$mlicc<- icc(interim2)[,2]
+metricsTableWdependentFexplanatoryG$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableWdependentFexplanatoryG<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableWdependentFexplanatoryG$model<-'TableWdependentFexplanatoryG'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableWdependentFexplanatoryG
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableWdependentFexplanatoryG$numerator<-as.numeric(do.call(rbind, strsplit(TableWdependentFexplanatoryG$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableWdependentFexplanatoryG$Total, " "))[,1])
+TableWdependentFexplanatoryG$denominator<-as.numeric(do.call(rbind, strsplit(TableWdependentFexplanatoryG$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableWdependentFexplanatoryG$rate<-BinomCI(x=TableWdependentFexplanatoryG$numerator,n=TableWdependentFexplanatoryG$denominator,method="wilson")[,1]
+TableWdependentFexplanatoryG$lcl<-BinomCI(x=TableWdependentFexplanatoryG$numerator,n=TableWdependentFexplanatoryG$denominator,method="wilson")[,2]
+TableWdependentFexplanatoryG$ucl<-BinomCI(x=TableWdependentFexplanatoryG$numerator,n=TableWdependentFexplanatoryG$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableWdependentFexplanatoryG$group<-'group.TableWdependentFexplanatoryG'
+#export to Excel
+write.xlsx(TableWdependentFexplanatoryG,"R://Outputs140524ThreeDp/TableWdependentFexplanatoryG.xlsx")
+write.xlsx(metricsTableWdependentFexplanatoryG,"R://Outputs140524ThreeDp/metricsTableWdependentFexplanatoryG.xlsx")
+write.xlsx(randomsTableWdependentFexplanatoryG,"R://Outputs140524ThreeDp/randomsTableWdependentFexplanatoryG.xlsx")
+gc()
+# TableZdependentFexplanatoryG
+TableZ %>%
+summary_factorlist(dependentF,explanatoryG,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableZ%>%
+glmuni(dependentF,explanatoryG)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableZ%>%
+glmmulti(dependentF,explanatoryG)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableZdependentFexplanatoryG<-data.frame(logLik(interim1)[1])
+colnames(metricsTableZdependentFexplanatoryG)<-'mvlogLik'
+metricsTableZdependentFexplanatoryG$group<-'TableZdependentFexplanatoryG'
+metricsTableZdependentFexplanatoryG$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableZ%>%
+glmmixed(dependentF,explanatoryG, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableZdependentFexplanatoryG$mlLogLik<- logLik(interim2)[1]
+metricsTableZdependentFexplanatoryG$mlAIC<- extractAIC(interim2)[2]
+metricsTableZdependentFexplanatoryG$mlicc<- icc(interim2)[,2]
+metricsTableZdependentFexplanatoryG$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableZdependentFexplanatoryG<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableZdependentFexplanatoryG$model<-'TableZdependentFexplanatoryG'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableZdependentFexplanatoryG
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableZdependentFexplanatoryG$numerator<-as.numeric(do.call(rbind, strsplit(TableZdependentFexplanatoryG$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableZdependentFexplanatoryG$Total, " "))[,1])
+TableZdependentFexplanatoryG$denominator<-as.numeric(do.call(rbind, strsplit(TableZdependentFexplanatoryG$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableZdependentFexplanatoryG$rate<-BinomCI(x=TableZdependentFexplanatoryG$numerator,n=TableZdependentFexplanatoryG$denominator,method="wilson")[,1]
+TableZdependentFexplanatoryG$lcl<-BinomCI(x=TableZdependentFexplanatoryG$numerator,n=TableZdependentFexplanatoryG$denominator,method="wilson")[,2]
+TableZdependentFexplanatoryG$ucl<-BinomCI(x=TableZdependentFexplanatoryG$numerator,n=TableZdependentFexplanatoryG$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableZdependentFexplanatoryG$group<-'group.TableZdependentFexplanatoryG'
+#export to Excel
+write.xlsx(TableZdependentFexplanatoryG,"R://Outputs140524ThreeDp/TableZdependentFexplanatoryG.xlsx")
+write.xlsx(metricsTableZdependentFexplanatoryG,"R://Outputs140524ThreeDp/metricsTableZdependentFexplanatoryG.xlsx")
+write.xlsx(randomsTableZdependentFexplanatoryG,"R://Outputs140524ThreeDp/randomsTableZdependentFexplanatoryG.xlsx")
+gc()
+# TableQdependentFexplanatoryG
+TableQ %>%
+summary_factorlist(dependentF,explanatoryG,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableQ%>%
+glmuni(dependentF,explanatoryG)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableQ%>%
+glmmulti(dependentF,explanatoryG)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableQdependentFexplanatoryG<-data.frame(logLik(interim1)[1])
+colnames(metricsTableQdependentFexplanatoryG)<-'mvlogLik'
+metricsTableQdependentFexplanatoryG$group<-'TableQdependentFexplanatoryG'
+metricsTableQdependentFexplanatoryG$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableQ%>%
+glmmixed(dependentF,explanatoryG, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableQdependentFexplanatoryG$mlLogLik<- logLik(interim2)[1]
+metricsTableQdependentFexplanatoryG$mlAIC<- extractAIC(interim2)[2]
+metricsTableQdependentFexplanatoryG$mlicc<- icc(interim2)[,2]
+metricsTableQdependentFexplanatoryG$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableQdependentFexplanatoryG<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableQdependentFexplanatoryG$model<-'TableQdependentFexplanatoryG'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableQdependentFexplanatoryG
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableQdependentFexplanatoryG$numerator<-as.numeric(do.call(rbind, strsplit(TableQdependentFexplanatoryG$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableQdependentFexplanatoryG$Total, " "))[,1])
+TableQdependentFexplanatoryG$denominator<-as.numeric(do.call(rbind, strsplit(TableQdependentFexplanatoryG$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableQdependentFexplanatoryG$rate<-BinomCI(x=TableQdependentFexplanatoryG$numerator,n=TableQdependentFexplanatoryG$denominator,method="wilson")[,1]
+TableQdependentFexplanatoryG$lcl<-BinomCI(x=TableQdependentFexplanatoryG$numerator,n=TableQdependentFexplanatoryG$denominator,method="wilson")[,2]
+TableQdependentFexplanatoryG$ucl<-BinomCI(x=TableQdependentFexplanatoryG$numerator,n=TableQdependentFexplanatoryG$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableQdependentFexplanatoryG$group<-'group.TableQdependentFexplanatoryG'
+#export to Excel
+write.xlsx(TableQdependentFexplanatoryG,"R://Outputs140524ThreeDp/TableQdependentFexplanatoryG.xlsx")
+write.xlsx(metricsTableQdependentFexplanatoryG,"R://Outputs140524ThreeDp/metricsTableQdependentFexplanatoryG.xlsx")
+write.xlsx(randomsTableQdependentFexplanatoryG,"R://Outputs140524ThreeDp/randomsTableQdependentFexplanatoryG.xlsx")
+gc()
+# TableOdependentFexplanatoryG
+TableO %>%
+summary_factorlist(dependentF,explanatoryG,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableO%>%
+glmuni(dependentF,explanatoryG)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableO%>%
+glmmulti(dependentF,explanatoryG)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableOdependentFexplanatoryG<-data.frame(logLik(interim1)[1])
+colnames(metricsTableOdependentFexplanatoryG)<-'mvlogLik'
+metricsTableOdependentFexplanatoryG$group<-'TableOdependentFexplanatoryG'
+metricsTableOdependentFexplanatoryG$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableO%>%
+glmmixed(dependentF,explanatoryG, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableOdependentFexplanatoryG$mlLogLik<- logLik(interim2)[1]
+metricsTableOdependentFexplanatoryG$mlAIC<- extractAIC(interim2)[2]
+metricsTableOdependentFexplanatoryG$mlicc<- icc(interim2)[,2]
+metricsTableOdependentFexplanatoryG$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableOdependentFexplanatoryG<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableOdependentFexplanatoryG$model<-'TableOdependentFexplanatoryG'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableOdependentFexplanatoryG
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableOdependentFexplanatoryG$numerator<-as.numeric(do.call(rbind, strsplit(TableOdependentFexplanatoryG$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableOdependentFexplanatoryG$Total, " "))[,1])
+TableOdependentFexplanatoryG$denominator<-as.numeric(do.call(rbind, strsplit(TableOdependentFexplanatoryG$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableOdependentFexplanatoryG$rate<-BinomCI(x=TableOdependentFexplanatoryG$numerator,n=TableOdependentFexplanatoryG$denominator,method="wilson")[,1]
+TableOdependentFexplanatoryG$lcl<-BinomCI(x=TableOdependentFexplanatoryG$numerator,n=TableOdependentFexplanatoryG$denominator,method="wilson")[,2]
+TableOdependentFexplanatoryG$ucl<-BinomCI(x=TableOdependentFexplanatoryG$numerator,n=TableOdependentFexplanatoryG$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableOdependentFexplanatoryG$group<-'group.TableOdependentFexplanatoryG'
+#export to Excel
+write.xlsx(TableOdependentFexplanatoryG,"R://Outputs140524ThreeDp/TableOdependentFexplanatoryG.xlsx")
+write.xlsx(metricsTableOdependentFexplanatoryG,"R://Outputs140524ThreeDp/metricsTableOdependentFexplanatoryG.xlsx")
+write.xlsx(randomsTableOdependentFexplanatoryG,"R://Outputs140524ThreeDp/randomsTableOdependentFexplanatoryG.xlsx")
+gc()
+# TableBdependentSexplanatoryE
+TableB %>%
+summary_factorlist(dependentS,explanatoryE,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableB%>%
+glmuni(dependentS,explanatoryE)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableB%>%
+glmmulti(dependentS,explanatoryE)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableBdependentSexplanatoryE<-data.frame(logLik(interim1)[1])
+colnames(metricsTableBdependentSexplanatoryE)<-'mvlogLik'
+metricsTableBdependentSexplanatoryE$group<-'TableBdependentSexplanatoryE'
+metricsTableBdependentSexplanatoryE$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableB%>%
+glmmixed(dependentS,explanatoryE, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableBdependentSexplanatoryE$mlLogLik<- logLik(interim2)[1]
+metricsTableBdependentSexplanatoryE$mlAIC<- extractAIC(interim2)[2]
+metricsTableBdependentSexplanatoryE$mlicc<- icc(interim2)[,2]
+metricsTableBdependentSexplanatoryE$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableBdependentSexplanatoryE<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableBdependentSexplanatoryE$model<-'TableBdependentSexplanatoryE'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableBdependentSexplanatoryE
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableBdependentSexplanatoryE$numerator<-as.numeric(do.call(rbind, strsplit(TableBdependentSexplanatoryE$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableBdependentSexplanatoryE$Total, " "))[,1])
+TableBdependentSexplanatoryE$denominator<-as.numeric(do.call(rbind, strsplit(TableBdependentSexplanatoryE$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableBdependentSexplanatoryE$rate<-BinomCI(x=TableBdependentSexplanatoryE$numerator,n=TableBdependentSexplanatoryE$denominator,method="wilson")[,1]
+TableBdependentSexplanatoryE$lcl<-BinomCI(x=TableBdependentSexplanatoryE$numerator,n=TableBdependentSexplanatoryE$denominator,method="wilson")[,2]
+TableBdependentSexplanatoryE$ucl<-BinomCI(x=TableBdependentSexplanatoryE$numerator,n=TableBdependentSexplanatoryE$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableBdependentSexplanatoryE$group<-'group.TableBdependentSexplanatoryE'
+#export to Excel
+write.xlsx(TableBdependentSexplanatoryE,"R://Outputs140524ThreeDp/TableBdependentSexplanatoryE.xlsx")
+write.xlsx(metricsTableBdependentSexplanatoryE,"R://Outputs140524ThreeDp/metricsTableBdependentSexplanatoryE.xlsx")
+write.xlsx(randomsTableBdependentSexplanatoryE,"R://Outputs140524ThreeDp/randomsTableBdependentSexplanatoryE.xlsx")
+# TableAdependentSexplanatoryE
+gc()
+TableA %>%
+summary_factorlist(dependentS,explanatoryE,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableA%>%
+glmuni(dependentS,explanatoryE)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableA%>%
+glmmulti(dependentS,explanatoryE)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableAdependentSexplanatoryE<-data.frame(logLik(interim1)[1])
+colnames(metricsTableBdependentSexplanatoryE)<-'mvlogLik'
+metricsTableAdependentSexplanatoryE$group<-'TableAdependentSexplanatoryE'
+metricsTableAdependentSexplanatoryE$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableA%>%
+glmmixed(dependentS,explanatoryE, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableAdependentSexplanatoryE$mlLogLik<- logLik(interim2)[1]
+metricsTableAdependentSexplanatoryE$mlAIC<- extractAIC(interim2)[2]
+metricsTableAdependentSexplanatoryE$mlicc<- icc(interim2)[,2]
+metricsTableAdependentSexplanatoryE$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableAdependentSexplanatoryE<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableAdependentSexplanatoryE$model<-'TableAdependentSexplanatoryE'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableAdependentSexplanatoryE
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableAdependentSexplanatoryE$numerator<-as.numeric(do.call(rbind, strsplit(TableAdependentSexplanatoryE$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableAdependentSexplanatoryE$Total, " "))[,1])
+TableAdependentSexplanatoryE$denominator<-as.numeric(do.call(rbind, strsplit(TableAdependentSexplanatoryE$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableAdependentSexplanatoryE$rate<-BinomCI(x=TableAdependentSexplanatoryE$numerator,n=TableAdependentSexplanatoryE$denominator,method="wilson")[,1]
+TableAdependentSexplanatoryE$lcl<-BinomCI(x=TableAdependentSexplanatoryE$numerator,n=TableAdependentSexplanatoryE$denominator,method="wilson")[,2]
+TableAdependentSexplanatoryE$ucl<-BinomCI(x=TableAdependentSexplanatoryE$numerator,n=TableAdependentSexplanatoryE$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableAdependentSexplanatoryE$group<-'group.TableAdependentSexplanatoryE'
+#export to Excel
+write.xlsx(TableAdependentSexplanatoryE,"R://Outputs140524ThreeDp/TableAdependentSexplanatoryE.xlsx")
+write.xlsx(metricsTableAdependentSexplanatoryE,"R://Outputs140524ThreeDp/metricsTableAdependentSexplanatoryE.xlsx")
+write.xlsx(randomsTableAdependentSexplanatoryE,"R://Outputs140524ThreeDp/randomsTableAdependentSexplanatoryE.xlsx")
+gc()
+# TableZdependentSexplanatoryE
+TableZ %>%
+summary_factorlist(dependentS,explanatoryE,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableZ%>%
+glmuni(dependentS,explanatoryE)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableZ%>%
+glmmulti(dependentS,explanatoryE)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableZdependentSexplanatoryE<-data.frame(logLik(interim1)[1])
+colnames(metricsTableZdependentSexplanatoryE)<-'mvlogLik'
+metricsTableZdependentSexplanatoryE$group<-'TableZdependentSexplanatoryE'
+metricsTableZdependentSexplanatoryE$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableZ%>%
+glmmixed(dependentS,explanatoryE, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableZdependentSexplanatoryE$mlLogLik<- logLik(interim2)[1]
+metricsTableZdependentSexplanatoryE$mlAIC<- extractAIC(interim2)[2]
+metricsTableZdependentSexplanatoryE$mlicc<- icc(interim2)[,2]
+metricsTableZdependentSexplanatoryE$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableZdependentSexplanatoryE<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableZdependentSexplanatoryE$model<-'TableZdependentSexplanatoryE'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableZdependentSexplanatoryE
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableZdependentSexplanatoryE$numerator<-as.numeric(do.call(rbind, strsplit(TableZdependentSexplanatoryE$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableZdependentSexplanatoryE$Total, " "))[,1])
+TableZdependentSexplanatoryE$denominator<-as.numeric(do.call(rbind, strsplit(TableZdependentSexplanatoryE$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableZdependentSexplanatoryE$rate<-BinomCI(x=TableZdependentSexplanatoryE$numerator,n=TableZdependentSexplanatoryE$denominator,method="wilson")[,1]
+TableZdependentSexplanatoryE$lcl<-BinomCI(x=TableZdependentSexplanatoryE$numerator,n=TableZdependentSexplanatoryE$denominator,method="wilson")[,2]
+TableZdependentSexplanatoryE$ucl<-BinomCI(x=TableZdependentSexplanatoryE$numerator,n=TableZdependentSexplanatoryE$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableZdependentSexplanatoryE$group<-'group.TableZdependentSexplanatoryE'
+#export to Excel
+write.xlsx(TableZdependentSexplanatoryE,"R://Outputs140524ThreeDp/TableZdependentSexplanatoryE.xlsx")
+write.xlsx(metricsTableZdependentSexplanatoryE,"R://Outputs140524ThreeDp/metricsTableZdependentSexplanatoryE.xlsx")
+write.xlsx(randomsTableZdependentSexplanatoryE,"R://Outputs140524ThreeDp/randomsTableZdependentSexplanatoryE.xlsx")
+
+gc()
+# TableWdependentSexplanatoryE
+TableW %>%
+summary_factorlist(dependentS,explanatoryE,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableW%>%
+glmuni(dependentS,explanatoryE)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableW%>%
+glmmulti(dependentS,explanatoryE)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableWdependentSexplanatoryE<-data.frame(logLik(interim1)[1])
+colnames(metricsTableWdependentSexplanatoryE)<-'mvlogLik'
+metricsTableWdependentSexplanatoryE$group<-'TableWdependentSexplanatoryE'
+metricsTableWdependentSexplanatoryE$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableW%>%
+glmmixed(dependentS,explanatoryE, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableWdependentSexplanatoryE$mlLogLik<- logLik(interim2)[1]
+metricsTableWdependentSexplanatoryE$mlAIC<- extractAIC(interim2)[2]
+metricsTableWdependentSexplanatoryE$mlicc<- icc(interim2)[,2]
+metricsTableWdependentSexplanatoryE$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableWdependentSexplanatoryE<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableWdependentSexplanatoryE$model<-'TableWdependentSexplanatoryE'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableWdependentSexplanatoryE
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableWdependentSexplanatoryE$numerator<-as.numeric(do.call(rbind, strsplit(TableWdependentSexplanatoryE$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableWdependentSexplanatoryE$Total, " "))[,1])
+TableWdependentSexplanatoryE$denominator<-as.numeric(do.call(rbind, strsplit(TableWdependentSexplanatoryE$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableWdependentSexplanatoryE$rate<-BinomCI(x=TableWdependentSexplanatoryE$numerator,n=TableWdependentSexplanatoryE$denominator,method="wilson")[,1]
+TableWdependentSexplanatoryE$lcl<-BinomCI(x=TableWdependentSexplanatoryE$numerator,n=TableWdependentSexplanatoryE$denominator,method="wilson")[,2]
+TableWdependentSexplanatoryE$ucl<-BinomCI(x=TableWdependentSexplanatoryE$numerator,n=TableWdependentSexplanatoryE$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableWdependentSexplanatoryE$group<-'group.TableWdependentSexplanatoryE'
+#export to Excel
+write.xlsx(TableWdependentSexplanatoryE,"R://Outputs140524ThreeDp/TableWdependentSexplanatoryE.xlsx")
+write.xlsx(metricsTableWdependentSexplanatoryE,"R://Outputs140524ThreeDp/metricsTableWdependentSexplanatoryE.xlsx")
+write.xlsx(randomsTableWdependentSexplanatoryE,"R://Outputs140524ThreeDp/randomsTableWdependentSexplanatoryE.xlsx")
+gc()
+# TableQdependentSexplanatoryY
+TableQ %>%
+summary_factorlist(dependentS,explanatoryY,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableQ%>%
+glmuni(dependentS,explanatoryY)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableQ%>%
+glmmulti(dependentS,explanatoryY)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableQdependentSexplanatoryY<-data.frame(logLik(interim1)[1])
+colnames(metricsTableQdependentSexplanatoryY)<-'mvlogLik'
+metricsTableQdependentSexplanatoryY$group<-'TableQdependentSexplanatoryY'
+metricsTableQdependentSexplanatoryY$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableQ%>%
+glmmixed(dependentS,explanatoryY, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableQdependentSexplanatoryY$mlLogLik<- logLik(interim2)[1]
+metricsTableQdependentSexplanatoryY$mlAIC<- extractAIC(interim2)[2]
+metricsTableQdependentSexplanatoryY$mlicc<- icc(interim2)[,2]
+metricsTableQdependentSexplanatoryY$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableQdependentSexplanatoryY<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableQdependentSexplanatoryY$model<-'TableQdependentSexplanatoryY'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableQdependentSexplanatoryY
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableQdependentSexplanatoryY$numerator<-as.numeric(do.call(rbind, strsplit(TableQdependentSexplanatoryY$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableQdependentSexplanatoryY$Total, " "))[,1])
+TableQdependentSexplanatoryY$denominator<-as.numeric(do.call(rbind, strsplit(TableQdependentSexplanatoryY$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableQdependentSexplanatoryY$rate<-BinomCI(x=TableQdependentSexplanatoryY$numerator,n=TableQdependentSexplanatoryY$denominator,method="wilson")[,1]
+TableQdependentSexplanatoryY$lcl<-BinomCI(x=TableQdependentSexplanatoryY$numerator,n=TableQdependentSexplanatoryY$denominator,method="wilson")[,2]
+TableQdependentSexplanatoryY$ucl<-BinomCI(x=TableQdependentSexplanatoryY$numerator,n=TableQdependentSexplanatoryY$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableQdependentSexplanatoryY$group<-'group.TableQdependentSexplanatoryY'
+#export to Excel
+write.xlsx(TableQdependentSexplanatoryY,"R://Outputs140524ThreeDp/TableQdependentSexplanatoryY.xlsx")
+write.xlsx(metricsTableQdependentSexplanatoryY,"R://Outputs140524ThreeDp/metricsTableQdependentSexplanatoryY.xlsx")
+write.xlsx(randomsTableQdependentSexplanatoryY,"R://Outputs140524ThreeDp/randomsTableQdependentSexplanatoryY.xlsx")
+gc()
+# TableOdependentSexplanatoryY
+TableO %>%
+summary_factorlist(dependentS,explanatoryY,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+TableO%>%
+glmuni(dependentS,explanatoryY)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+TableO%>%
+glmmulti(dependentS,explanatoryY)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsTableOdependentSexplanatoryY<-data.frame(logLik(interim1)[1])
+colnames(metricsTableOdependentSexplanatoryY)<-'mvlogLik'
+metricsTableOdependentSexplanatoryY$group<-'TableOdependentSexplanatoryY'
+metricsTableOdependentSexplanatoryY$mvAIC<- extractAIC(interim1)[2]
+gc()
+TableO%>%
+glmmixed(dependentS,explanatoryY, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsTableOdependentSexplanatoryY$mlLogLik<- logLik(interim2)[1]
+metricsTableOdependentSexplanatoryY$mlAIC<- extractAIC(interim2)[2]
+metricsTableOdependentSexplanatoryY$mlicc<- icc(interim2)[,2]
+metricsTableOdependentSexplanatoryY$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsTableOdependentSexplanatoryY<-data.frame(ranef(interim2, condVar = TRUE))
+randomsTableOdependentSexplanatoryY$model<-'TableOdependentSexplanatoryY'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->TableOdependentSexplanatoryY
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+TableOdependentSexplanatoryY$numerator<-as.numeric(do.call(rbind, strsplit(TableOdependentSexplanatoryY$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(TableOdependentSexplanatoryY$Total, " "))[,1])
+TableOdependentSexplanatoryY$denominator<-as.numeric(do.call(rbind, strsplit(TableOdependentSexplanatoryY$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+TableOdependentSexplanatoryY$rate<-BinomCI(x=TableOdependentSexplanatoryY$numerator,n=TableOdependentSexplanatoryY$denominator,method="wilson")[,1]
+TableOdependentSexplanatoryY$lcl<-BinomCI(x=TableOdependentSexplanatoryY$numerator,n=TableOdependentSexplanatoryY$denominator,method="wilson")[,2]
+TableOdependentSexplanatoryY$ucl<-BinomCI(x=TableOdependentSexplanatoryY$numerator,n=TableOdependentSexplanatoryY$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+TableOdependentSexplanatoryY$group<-'group.TableOdependentSexplanatoryY'
+#export to Excel
+write.xlsx(TableOdependentSexplanatoryY,"R://Outputs140524ThreeDp/TableOdependentSexplanatoryY.xlsx")
+write.xlsx(metricsTableOdependentSexplanatoryY,"R://Outputs140524ThreeDp/metricsTableOdependentSexplanatoryY.xlsx")
+write.xlsx(randomsTableOdependentSexplanatoryY,"R://Outputs140524ThreeDp/randomsTableOdependentSexplanatoryY.xlsx")
+
+gc()
+# COM2dependentVexplanatoryZ
+COM2 %>%
+summary_factorlist(dependentV,explanatoryZ,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+COM2%>%
+glmuni(dependentV,explanatoryZ)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+COM2%>%
+glmmulti(dependentV,explanatoryZ)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsCOM2dependentVexplanatoryZ<-data.frame(logLik(interim1)[1])
+colnames(metricsCOM2dependentVexplanatoryZ)<-'mvlogLik'
+metricsCOM2dependentVexplanatoryZ$group<-'COM2dependentVexplanatoryZ'
+metricsCOM2dependentVexplanatoryZ$mvAIC<- extractAIC(interim1)[2]
+gc()
+COM2%>%
+glmmixed(dependentV,explanatoryZ, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsCOM2dependentVexplanatoryZ$mlLogLik<- logLik(interim2)[1]
+metricsCOM2dependentVexplanatoryZ$mlAIC<- extractAIC(interim2)[2]
+metricsCOM2dependentVexplanatoryZ$mlicc<- icc(interim2)[,2]
+metricsCOM2dependentVexplanatoryZ$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsCOM2dependentVexplanatoryZ<-data.frame(ranef(interim2, condVar = TRUE))
+randomsCOM2dependentVexplanatoryZ$model<-'COM2dependentVexplanatoryZ'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->COM2dependentVexplanatoryZ
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+COM2dependentVexplanatoryZ$numerator<-as.numeric(do.call(rbind, strsplit(COM2dependentVexplanatoryZ$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(COM2dependentVexplanatoryZ$Total, " "))[,1])
+COM2dependentVexplanatoryZ$denominator<-as.numeric(do.call(rbind, strsplit(COM2dependentVexplanatoryZ$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+COM2dependentVexplanatoryZ$rate<-BinomCI(x=COM2dependentVexplanatoryZ$numerator,n=COM2dependentVexplanatoryZ$denominator,method="wilson")[,1]
+COM2dependentVexplanatoryZ$lcl<-BinomCI(x=COM2dependentVexplanatoryZ$numerator,n=COM2dependentVexplanatoryZ$denominator,method="wilson")[,2]
+COM2dependentVexplanatoryZ$ucl<-BinomCI(x=COM2dependentVexplanatoryZ$numerator,n=COM2dependentVexplanatoryZ$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+COM2dependentVexplanatoryZ$group<-'group.COM2dependentVexplanatoryZ'
+#export to Excel
+write.xlsx(COM2dependentVexplanatoryZ,"R://Outputs140524ThreeDp/COM2dependentVexplanatoryZ.xlsx")
+write.xlsx(metricsCOM2dependentVexplanatoryZ,"R://Outputs140524ThreeDp/metricsCOM2dependentVexplanatoryZ.xlsx")
+write.xlsx(randomsCOM2dependentVexplanatoryZ,"R://Outputs140524ThreeDp/randomsCOM2dependentVexplanatoryZ.xlsx")
+
+gc()
+# COM2dependentCexplanatoryX
+COM2 %>%
+summary_factorlist(dependentC,explanatoryX,p=TRUE,total_col=TRUE,digits =c(12,0,3,0,0),add_dependent_label=TRUE,fit_id=TRUE)  ->example.summary
+gc()
+
+COM2%>%
+glmuni(dependentC,explanatoryX)%>%
+fit2df(estimate_suffix=" (univariable)", digits = c(3,3,3) )->example.uni
+gc()
+COM2%>%
+glmmulti(dependentC,explanatoryX)%>%
+{.->>interim1}%>%
+fit2df(estimate_suffix=" (multivariable)", digits = c(3,3,3) )->example.multi
+metricsCOM2dependentCexplanatoryX<-data.frame(logLik(interim1)[1])
+colnames(metricsCOM2dependentCexplanatoryX)<-'mvlogLik'
+metricsCOM2dependentCexplanatoryX$group<-'COM2dependentCexplanatoryX'
+metricsCOM2dependentCexplanatoryX$mvAIC<- extractAIC(interim1)[2]
+gc()
+COM2%>%
+glmmixed(dependentC,explanatoryX, random_effect,nAGQ=0)%>%
+{.->>interim2}%>%
+fit2df(estimate_suffix="multilevel" , digits = c(3,3,3))->example.multilevel
+metricsCOM2dependentCexplanatoryX$mlLogLik<- logLik(interim2)[1]
+metricsCOM2dependentCexplanatoryX$mlAIC<- extractAIC(interim2)[2]
+metricsCOM2dependentCexplanatoryX$mlicc<- icc(interim2)[,2]
+metricsCOM2dependentCexplanatoryX$mlSD<- data.frame(VarCorr(interim2))[,5]
+randomsCOM2dependentCexplanatoryX<-data.frame(ranef(interim2, condVar = TRUE))
+randomsCOM2dependentCexplanatoryX$model<-'COM2dependentCexplanatoryX'
+gc()
+example.summary%>%
+ff_merge(example.uni) %>%
+ff_merge(example.multi) %>%
+ff_merge(example.multilevel,last_merge=TRUE)->COM2dependentCexplanatoryX
+#ThreeDp engineer some of FinalFit's combined columns (in absence of knowing how to do this directly in finalfit)
+COM2dependentCexplanatoryX$numerator<-as.numeric(do.call(rbind, strsplit(COM2dependentCexplanatoryX$value, " "))[,1])*as.numeric(do.call(rbind, strsplit(COM2dependentCexplanatoryX$Total, " "))[,1])
+COM2dependentCexplanatoryX$denominator<-as.numeric(do.call(rbind, strsplit(COM2dependentCexplanatoryX$Total, " "))[,1])
+#obtain confidence intervals to go alongside basic rate and add to dateframe
+COM2dependentCexplanatoryX$rate<-BinomCI(x=COM2dependentCexplanatoryX$numerator,n=COM2dependentCexplanatoryX$denominator,method="wilson")[,1]
+COM2dependentCexplanatoryX$lcl<-BinomCI(x=COM2dependentCexplanatoryX$numerator,n=COM2dependentCexplanatoryX$denominator,method="wilson")[,2]
+COM2dependentCexplanatoryX$ucl<-BinomCI(x=COM2dependentCexplanatoryX$numerator,n=COM2dependentCexplanatoryX$denominator,method="wilson")[,3]
+#add data/model example to rows of dataframe
+COM2dependentCexplanatoryX$group<-'group.COM2dependentCexplanatoryX'
+#export to Excel
+write.xlsx(COM2dependentCexplanatoryX,"R://Outputs140524ThreeDp/COM2dependentCexplanatoryX.xlsx")
+write.xlsx(metricsCOM2dependentCexplanatoryX,"R://Outputs140524ThreeDp/metricsCOM2dependentCexplanatoryX.xlsx")
+write.xlsx(randomsCOM2dependentCexplanatoryX,"R://Outputs140524ThreeDp/randomsCOM2dependentCexplanatoryX.xlsx")
+
+
