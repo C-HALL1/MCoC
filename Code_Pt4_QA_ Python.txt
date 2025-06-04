@@ -1,0 +1,106 @@
+############
+This code uses standard data processing techniques and statistical tests applied to a specific dataset. As such, it is not viewed as "a custom algorithm or software central to the paper and has not been reported previously in a published research paper", so is not at production standard for those without access to NHS England's secure Data Access Environment, which is strictly controlled given the need to ensure patient confidentiality, but is being made available to maximise transparency.
+
+The below code is not part of the main pipeline but an extra layer of quality assurance to run some of the regression models in Python using SK Learn to check that the values returned are similar to those run by the main regression models in R.
+############
+
+import numpy as np
+import pandas as pd
+import re
+import datetime
+from sklearn import metrics
+from sklearn import svm
+from sklearn.model_selection import cross_val_score
+from sklearn.linear_model import LogisticRegression
+from sklearn.feature_selection import SelectKBest, chi2
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from scipy.stats import chi2_contingency
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.model_selection import StratifiedKFold
+from sklearn.model_selection import cross_val_predict
+from sklearn.model_selection import cross_validate
+from sklearn.metrics import average_precision_score
+from sklearn.metrics import make_scorer
+from sklearn.metrics import precision_score
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+ 
+ 
+print (pd.__version__)
+print (np.__version__)
+
+#Ths is the start of further work once the data have been exported to R to produce a parallel logistic regression model in SK Learn. This step creates some additional fields that are used in the base tables. The output from the logistic regression in SKLearn is not used in the research paper but serves as a sense check of the output that is generated in R to ascertain that it is sufficiently close.
+ 
+IMD_cond = [single_export_step4["DECI_IMD"]<0,single_export_step4["DECI_IMD"]<6]
+IMD_choice = ["unknown","more_deprived"]
+Parity_cond = [single_export_step4["Parity"]>0,single_export_step4["Parity"]==0]
+Parity_choice = ["Yes","No"]
+Age_cond = [single_export_step4["BandedAge"]<35,single_export_step4["BandedAge"]>34]
+Age_choice = ["u34","o35"]
+Vlate_cond = [single_export_step4["CombinedContCare"]==4,single_export_step4["CombinedContCare"]==0]
+Vlate_choice = [1,0]
+MCoC_cond = [single_export_step4["CombinedContCare"]==3,single_export_step4["CombinedContCare"]==0]
+MCoC_choice = [1,0]
+ 
+ 
+single_export_step4["Binary_IMD"]=np.select(IMD_cond,IMD_choice,"less_deprived")
+single_export_step4["PrevBirth"]=np.select(Parity_cond,Parity_choice,"Unknown")
+single_export_step4["BroadAge"]=np.select(Age_cond,Age_choice,"Unknown")
+single_export_step4["Vlate"]=np.select(Vlate_cond,Vlate_choice,np.NaN)
+single_export_step4["MCoC"]=np.select(MCoC_cond,MCoC_choice,np.NaN)
+ 
+display(single_export_step4)
+
+#create a series of base tables to run the multivariable logistic regression in SKLearn. The output from the logistic regression in SKLearn is not used in the research paper but serves as a sense check of the output that is generated in R to ascertain that it is sufficiently close.
+ 
+TableBdependentFP1 = single_export_step4[["BreastMilkFirstFeed","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["SummaryEthnicity"]=="Black")].dropna()
+TableBdependentF =  pd.get_dummies(TableBdependentFP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BandedAge_34","FinalEthnicity_M","DECI_IMD_10.0","Parity_0","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableAdependentFP1 = single_export_step4[["BreastMilkFirstFeed","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["SummaryEthnicity"]=="SouthAsian")].dropna()
+TableAdependentF =  pd.get_dummies(TableAdependentFP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BandedAge_34","FinalEthnicity_H","DECI_IMD_10.0","Parity_0","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableWdependentFP1 = single_export_step4[["BreastMilkFirstFeed","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["SummaryEthnicity"]=="White")].dropna()
+TableWdependentF =  pd.get_dummies(TableWdependentFP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BandedAge_34","FinalEthnicity_A","DECI_IMD_10.0","Parity_0","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableQdependentFP1 = single_export_step4[["BreastMilkFirstFeed","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["DECI_IMD"]<3)&(single_export_step4["DECI_IMD"]>-1)].dropna()
+TableQdependentF =  pd.get_dummies(TableQdependentFP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BandedAge_34","FinalEthnicity_A","DECI_IMD_2.0","Parity_0","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableOdependentFP1 = single_export_step4[["BreastMilkFirstFeed","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["DECI_IMD"]>2)].dropna()
+TableOdependentF =  pd.get_dummies(TableOdependentFP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BandedAge_34","FinalEthnicity_A","DECI_IMD_10.0","Parity_0","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+COM2dependentFP1 = single_export_step4[["BreastMilkFirstFeed","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late","CombinedContCare"]].dropna()
+COM2dependentF =  pd.get_dummies(COM2dependentFP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BandedAge_34","FinalEthnicity_A","DECI_IMD_10.0","Parity_0","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+COM2dependentSP1 = single_export_step4[["StillBirthFlag","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late","CombinedContCare"]].dropna()
+COM2dependentS =  pd.get_dummies(COM2dependentSP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BandedAge_34","FinalEthnicity_A","DECI_IMD_10.0","Parity_0","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableBdependentSP1 = single_export_step4[["StillBirthFlag","BroadAge","FinalEthnicity","Binary_IMD","PrevBirth","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["SummaryEthnicity"]=="Black")].dropna()
+TableBdependentS =  pd.get_dummies(TableBdependentSP1, columns = ["BroadAge","FinalEthnicity","Binary_IMD","PrevBirth","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BroadAge_u34","FinalEthnicity_M","Binary_IMD_less_deprived","PrevBirth_No","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableAdependentSP1 = single_export_step4[["StillBirthFlag","BroadAge","FinalEthnicity","Binary_IMD","PrevBirth","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["SummaryEthnicity"]=="SouthAsian")].dropna()
+TableAdependentS =  pd.get_dummies(TableAdependentSP1, columns = ["BroadAge","FinalEthnicity","Binary_IMD","PrevBirth","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BroadAge_u34","FinalEthnicity_H","Binary_IMD_less_deprived","PrevBirth_No","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableAdependentSP1 = single_export_step4[["StillBirthFlag","BroadAge","FinalEthnicity","Binary_IMD","PrevBirth","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["SummaryEthnicity"]=="SouthAsian")].dropna()
+TableAdependentS =  pd.get_dummies(TableAdependentSP1, columns = ["BroadAge","FinalEthnicity","Binary_IMD","PrevBirth","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BroadAge_u34","FinalEthnicity_H","Binary_IMD_less_deprived","PrevBirth_No","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableWdependentSP1 = single_export_step4[["StillBirthFlag","BroadAge","FinalEthnicity","Binary_IMD","PrevBirth","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["SummaryEthnicity"]=="White")].dropna()
+TableWdependentS =  pd.get_dummies(TableWdependentSP1, columns = ["BroadAge","FinalEthnicity","Binary_IMD","PrevBirth","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BroadAge_u34","FinalEthnicity_A","Binary_IMD_less_deprived","PrevBirth_No","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableQdependentSP1 = single_export_step4[["StillBirthFlag","BroadAge","SummaryEthnicity","DECI_IMD","PrevBirth","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["DECI_IMD"]<3)&(single_export_step4["DECI_IMD"]>-1)].dropna()
+TableQdependentS =  pd.get_dummies(TableQdependentSP1, columns = ["BroadAge","SummaryEthnicity","DECI_IMD","PrevBirth","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BroadAge_u34","SummaryEthnicity_White","DECI_IMD_2.0","PrevBirth_No","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+TableOdependentSP1 = single_export_step4[["StillBirthFlag","BroadAge","SummaryEthnicity","DECI_IMD","PrevBirth","PrevCaes","PrevStill","Late","CombinedContCare"]][(single_export_step4["DECI_IMD"]>2)].dropna()
+TableOdependentS =  pd.get_dummies(TableOdependentSP1, columns = ["BroadAge","SummaryEthnicity","DECI_IMD","PrevBirth","PrevCaes","PrevStill","CombinedContCare"]).drop(columns=["BroadAge_u34","SummaryEthnicity_White","DECI_IMD_10.0","PrevBirth_No","PrevCaes_0","PrevStill_0","CombinedContCare_0.0"]) 
+COM2dependentCP1 = single_export_step4[["MCoC","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill","Late"]].dropna()
+COM2dependentC =  pd.get_dummies(COM2dependentCP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill"]).drop(columns=["BandedAge_34","FinalEthnicity_A","DECI_IMD_10.0","Parity_0","PrevCaes_0","PrevStill_0"]) 
+COM2dependentVP1 = single_export_step4[["Vlate","BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill"]].dropna()
+COM2dependentV =  pd.get_dummies(COM2dependentVP1, columns = ["BandedAge","FinalEthnicity","DECI_IMD","Parity","PrevCaes","PrevStill"]).drop(columns=["BandedAge_34","FinalEthnicity_A","DECI_IMD_10.0","Parity_0","PrevCaes_0","PrevStill_0"]) 
+
+#iterate through the base tables to run the logistic regression in SKLearn.The output from the logistic regression in SKLearn is not used in the research paper but serves as a sense check of the output that is generated in R to ascertain that it is sufficiently close.
+ 
+def get_df_name(df):
+    name =[x for x in globals() if globals()[x] is df][0]
+    return name
+ 
+for i in [COM2dependentS,TableAdependentS,TableBdependentS,TableWdependentS,TableQdependentS,TableOdependentS,COM2dependentF,TableAdependentF,TableBdependentF,TableWdependentF,TableQdependentF,TableOdependentF,COM2dependentC,COM2dependentV]:
+  X = np.array(i.iloc[:,1:])
+  y = np.array(i.iloc[:,0])  
+  M=i.groupby(by=i.iloc[:,0]).count().to_numpy()
+  N=i.groupby(by=i.iloc[:,0]).sum().to_numpy()
+  clf = LogisticRegression(solver="liblinear",penalty="l2").fit(X,y)
+  Z = clf.coef_
+  f =  list(i.columns)[1:]
+  Q = np.vstack((f,np.exp(Z[0]).round(3),N[:,1:]))
+  k=np.expand_dims(["Intercept",np.exp(clf.intercept_[0]).round(3),M[0,1],M[1,1]],axis=1)
+  Q1 = np.hstack((k,Q))
+  R=pd.DataFrame(np.transpose(Q1))
+  R.columns=(str(get_df_name(i)),"coefficient","negative_outcome","positive_outcome")
+  display(R)
