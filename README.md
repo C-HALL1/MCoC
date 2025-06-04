@@ -7,12 +7,12 @@
 
 **Note:** No data is shared in this repository 
 
-### Project Stucture TBD
+### Project Stucture 
 
 - The main pipeline code is split into 3  and is found in the root of the repository. `Please see Usage below for more information`
-- The accompanying [report](./reports/report.pdf) is also available in the `reports` folder
-- More information about the code usage can be found in the [model card](./model_card.md)
-- {OTHER REPO STRUCTURE}
+- The output of each part will feed into the next part of the code.
+- The output of the main pipeline contains the data used for the results of the paper. 
+- Regression models in python are then for comparison against the main regression model in R to quality assure the analysis. 
 
 ### Built With
 
@@ -42,13 +42,14 @@ Please contact [chris.roebuck@nhs.net](mailto:chris.roebuck@nhs.net), [charlotte
 ### Usage
 The main pipeline is run first. The main pipline is split into three. Part 1 contains SQL code. Part 2 the Pandas code. Part 3 contains R code. The output of Part 1 feeds into the start of Part 2. The output of Part 2 feeds into the start of Part 3. 
 
-The final stage of the pipeline in R Studio involves reformatting and creating additional derivations to underpin the statistical analysis, followed by running the statistical analysis. A minimum set of core fields were exported from the Pandas section of the pipeline.
+The final stage of the pipeline in R Studio involves reformatting and creating additional derivations to underpin the statistical analysis, followed by running the statistical analysis (logistic regression model). A minimum set of core fields were exported from the Pandas section of the pipeline. This is the output used for the main results in the paper. 
+
+Additional quality assurance then takes place in Python. Regression models are run in Python using K Learn to check the values returned are similar to those run by the main regression model in R. 
 
 
 #### Outputs
-{LIST AND DESCRIPTION OF OUTPUTS TBD}
-
-{NOTES ON REPRODUCIBILITY OF RESULTS TBD}
+The output of the main pipeline contains the data used for the results of the paper. 
+Please see the published paper for the outputs of the analysis contained in the results and supplementary information sections. 
 
 #### Datasets
 This data uses the Maternity Services Dataset (MSDS).
