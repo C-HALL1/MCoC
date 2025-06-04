@@ -9,7 +9,7 @@
 
 ### Project Stucture TBD
 
-- The main pipeline code is split into 2 (SQL and Pandas) and is found in the root of the repository. `Please see Usage below for more information`
+- The main pipeline code is split into 3  and is found in the root of the repository. `Please see Usage below for more information`
 - The accompanying [report](./reports/report.pdf) is also available in the `reports` folder
 - More information about the code usage can be found in the [model card](./model_card.md)
 - {OTHER REPO STRUCTURE}
@@ -40,7 +40,10 @@ Alternatively, to replicate thie piece of work outside of NHS England, you will 
 Please contact [chris.roebuck@nhs.net](mailto:chris.roebuck@nhs.net), [charlotte.atherden@nhs.net](mailto:charlotte.atherden@nhs.net) or [k.parkyn@nhs.net](mailto:k.parkyn@nhs.net) with any questions about using or adapting the code. 
 
 ### Usage
-The main pipeline is run first. The main pipline is split into two. Part 1 contains SQL code. The output of the SQL code feeds directly into part 2 which is written in Pandas. 
+The main pipeline is run first. The main pipline is split into three. Part 1 contains SQL code. Part 2 the Pandas code. Part 3 contains R code. The output of Part 1 feeds into the start of Part 2. The output of Part 2 feeds into the start of Part 3. 
+
+The final stage of the pipeline in R Studio involves reformatting and creating additional derivations to underpin the statistical analysis, followed by running the statistical analysis. A minimum set of core fields were exported from the Pandas section of the pipeline.
+
 
 #### Outputs
 {LIST AND DESCRIPTION OF OUTPUTS TBD}
